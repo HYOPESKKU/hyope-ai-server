@@ -1,4 +1,4 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 from typing import List, Literal
 from datetime import datetime
 
@@ -24,6 +24,12 @@ class AssessmentResult(BaseModel):
     riskLevel: Literal["OBSERVE", "CAUTION", "WARNING", "HIGH"]
     summary: str
     recommendation: str
+
+    @field_validator("depressionScore", "emotionalStability", "healthRisk", "cognitiveScore", "overallRisk")
+    @classmethod
+    def clamp_score(cls, v: float) -> float:
+        # LLM이 0~10 범위를 벗어난 점수를 반환하는 경우 범위 내로 강제 조정
+        return max(0.0, min(10.0, v))
 
 
 class AdherenceRecord(BaseModel):

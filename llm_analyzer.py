@@ -9,7 +9,10 @@ load_dotenv()
 
 # 모듈 로드 시점이 아닌 실제 호출 시점에 초기화 — 시작 시 키 검증은 main.py에서 담당
 def _get_client() -> OpenAI:
-    return OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+    return OpenAI(
+        api_key=os.getenv("GEMINI_API_KEY"),
+        base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
+    )
 
 
 ANALYSIS_PROMPT = """
@@ -113,9 +116,9 @@ def analyze_with_llm(request: AnalyzeCallRequest, max_retries: int = 2) -> dict:
     client = _get_client()
     last_raw = ""
     for attempt in range(max_retries + 1):
-        response = client.responses.create(
-            model="gpt-4.1-mini",
-            input=[
+        response = client.chat.completions.create(
+            model="gemini-2.5-flash",
+            messages=[
                 {
                     "role": "system",
                     "content": ANALYSIS_PROMPT
@@ -128,10 +131,16 @@ def analyze_with_llm(request: AnalyzeCallRequest, max_retries: int = 2) -> dict:
             temperature=0,
         )
 
-        last_raw = response.output_text
+        last_raw = response.choices[0].message.content
+
+        # Gemini가 ```json ... ``` 블록으로 감싸서 반환하는 경우 제거
+        cleaned = last_raw.strip()
+        if cleaned.startswith("```"):
+            cleaned = cleaned.split("\n", 1)[-1]
+            cleaned = cleaned.rsplit("```", 1)[0].strip()
 
         try:
-            return json.loads(last_raw)
+            return json.loads(cleaned)
         except json.JSONDecodeError:
             # LLM이 마크다운 블록이나 설명 문장을 붙여 반환하는 경우 재시도
             if attempt < max_retries:

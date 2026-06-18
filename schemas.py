@@ -45,3 +45,8 @@ class AnalyzeCallResponse(BaseModel):
     measuredAt: datetime
     assessment: AssessmentResult
     adherenceRecords: List[AdherenceRecord]
+
+
+class CallRequest(BaseModel):
+    recipientId: int
+    phoneNumber: str

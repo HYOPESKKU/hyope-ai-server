@@ -1,9 +1,10 @@
 import os
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, BackgroundTasks, Request, Response
 from datetime import datetime
 
-from schemas import AnalyzeCallRequest, AnalyzeCallResponse
+from schemas import AnalyzeCallRequest, AnalyzeCallResponse, CallRequest
 from llm_analyzer import analyze_with_llm
+from claw_handler import initiate_call, handle_transcript
 
 
 # 서버 시작 시점에 필수 환경변수 확인 — 요청이 들어온 뒤에 터지지 않도록
@@ -52,6 +53,28 @@ def fix_adherence_records(records: list) -> list:
         })
 
     return fixed
+
+
+@app.post("/call")
+async def request_call(request: CallRequest, background_tasks: BackgroundTasks):
+    """Spring CallScheduler로부터 통화 요청을 받아 claw-ops로 전화를 발신한다.
+    즉시 200을 반환하고 전화 발신은 백그라운드에서 처리한다."""
+    background_tasks.add_task(initiate_call, request.recipientId, request.phoneNumber)
+    return {"status": "accepted"}
+
+
+@app.post("/webhook/transcript")
+async def transcript_webhook(req: Request, background_tasks: BackgroundTasks):
+    """claw-ops STT 완료 웹훅 수신 — transcript.completed 이벤트만 처리한다."""
+    form = await req.form()
+    event = form.get("Event")
+
+    if event == "transcript.completed":
+        call_id = form.get("CallId")
+        transcript_url = form.get("TranscriptUrl")
+        background_tasks.add_task(handle_transcript, call_id, transcript_url)
+
+    return Response(status_code=200)
 
 
 @app.get("/")

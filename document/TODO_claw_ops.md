@@ -2,70 +2,80 @@
 
 ## 현재 상태
 
-`/analyze-call` 엔드포인트로 LLM 분석 자체는 동작 확인 완료.  
-claw-ops API 포맷 미확정으로 `/call` 엔드포인트 구현 보류 중.
+| 항목 | 상태 |
+|---|---|
+| `/analyze-call` LLM 분석 | ✅ 완료 (로컬 테스트 완료) |
+| `POST /call` 엔드포인트 | ✅ 스켈레톤 구현 완료 (`main.py`) |
+| `POST /webhook/transcript` 엔드포인트 | ✅ 스켈레톤 구현 완료 (`main.py`) |
+| transcript → entries 변환 | ✅ 구현 완료 (`claw_handler.py`) |
+| Spring `/call-result` 전송 | ✅ 구현 완료 (`claw_handler.py`) |
+| VoiceML 스크립트 엔드포인트 | ❌ 미구현 |
+| 공개 webhook URL (ngrok 등) | ❌ 미설정 |
+| claw-ops 계정 정보 `.env` 등록 | ❌ 미설정 |
 
 ---
 
-## 구현해야 할 것
+## 남은 작업
 
-### 1. `POST /call` 엔드포인트 추가 (`main.py`)
+### 1. VoiceML 스크립트 엔드포인트 (`POST /voiceml` 또는 별도 URL)
 
-Spring Boot `CallScheduler`가 예약 시각마다 이 엔드포인트를 호출함.
-
-```
-Request (Spring → FastAPI):
-{
-  "recipientId": 1,
-  "phoneNumber": "010-1234-5678"
-}
-
-Response: 200 OK (즉시 반환, 이후 백그라운드 처리)
-```
-
-### 2. 백그라운드 처리 함수 (`process_call`)
+claw-ops가 전화를 걸 때 이 URL로 "어떤 질문을 할지" 스크립트를 가져간다.
+어르신에게 물어볼 질문 목록을 VoiceML 형식으로 반환해야 한다.
 
 ```
-1. claw-ops API로 전화 발신          ← TODO: claw-ops 포맷 확인 필요
-2. 통화 종료 후 STT transcript 수신   ← TODO: claw-ops 응답 포맷 확인 필요
-3. transcript → entries 변환
-4. LLM 분석 (기존 analyze_with_llm 재사용)
-5. Spring POST /call-result 로 결과 전송
+CLAWOPS_VOICEML_URL=https://<public-url>/voiceml
 ```
 
-### 3. `POST /call-result` 콜백 전송 (`main.py`)
+FastAPI에 엔드포인트를 추가하거나 외부 URL로 제공해도 된다.
 
-Spring이 받는 형식 (BE_issue6 기준):
+### 2. 공개 webhook URL 설정
 
-```json
-{
-  "recipient_id": 1,
-  "call_log": {
-    "started_at": "...",
-    "ended_at": "...",
-    "status": "COMPLETED"
-  },
-  "call_log_entries": [
-    { "sequence": 1, "question": "...", "answer": "...", "asked_at": "..." }
-  ],
-  "assessment": { ... },
-  "adherence_records": [ ... ]
-}
+claw-ops가 STT 완료 후 `/webhook/transcript`로 POST를 보내야 하므로,
+AI 서버가 외부에서 접근 가능해야 한다.
+
+로컬 개발 시 ngrok 사용:
+```bash
+ngrok http 8000
+# 발급된 URL → .env에 등록
+# WEBHOOK_BASE_URL=https://xxxx.ngrok.io
+```
+
+배포 환경에서는 실제 서버 URL로 대체한다.
+
+### 3. `.env` 등록 필요 항목
+
+```env
+CLAWOPS_API_KEY=sk_...
+CLAWOPS_ACCOUNT_ID=AC...
+CLAWOPS_FROM_NUMBER=07052358010    # claw-ops 콘솔에서 확인
+CLAWOPS_VOICEML_URL=https://...   # VoiceML 스크립트 URL
+CLAWOPS_SIGNING_KEY=...           # 웹훅 서명 검증용 (선택)
+WEBHOOK_BASE_URL=https://...      # 외부 접근 가능한 AI 서버 URL
+SPRING_BASE_URL=http://localhost:8080
 ```
 
 ---
 
-## claw-ops 확인 필요 사항
+## 구현된 흐름
 
-- 전화 발신 API 엔드포인트 및 요청 형식
-- 통화 종료 이벤트 수신 방식 (webhook? polling?)
-- STT transcript 응답 형식 (질문-답변 세트인지, 단순 텍스트인지)
-- transcript → `entries` 변환 방식 논의 필요
+```
+Spring CallScheduler
+  → POST /call { recipientId, phoneNumber }
+  → claw-ops calls.create() 전화 발신 (VoiceML 스크립트로 질문)
+  → 통화 종료 후 claw-ops STT 처리
+  → POST /webhook/transcript { CallId, TranscriptUrl, ... }
+  → GCS에서 transcript JSON 다운로드
+  → AGENT/CUSTOMER 세그먼트 → 질문-답변 쌍 변환
+  → LLM 분석
+  → Spring POST /call-result 전송
+  → Spring DB 저장 완료
+```
 
 ---
 
 ## 참고
 
+- claw-ops 발신 API: `claw_handler.py` `initiate_call()`
+- transcript 처리: `claw_handler.py` `handle_transcript()`
 - Spring → FastAPI 호출 코드: `AiClientService.java`
-- Spring이 결과 받는 엔드포인트: `POST /call-result` (`CallResultController.java`)
-- BE 연동 가이드: `SUGGESTION.md`
+- Spring 결과 수신 엔드포인트: `CallResultController.java`

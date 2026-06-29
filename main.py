@@ -1,10 +1,14 @@
 import os
+import random
+import asyncio
+import httpx
 from fastapi import FastAPI, HTTPException, BackgroundTasks, Request, Response
 from datetime import datetime
 
 from schemas import AnalyzeCallRequest, AnalyzeCallResponse, CallRequest
 from llm_analyzer import analyze_with_llm
 from claw_handler import initiate_call, handle_transcript
+from dummy_entries import DUMMY_ENTRY_SETS
 
 
 # 서버 시작 시점에 필수 환경변수 확인 — 요청이 들어온 뒤에 터지지 않도록
@@ -54,12 +58,62 @@ def fix_adherence_records(records: list) -> list:
 
     return fixed
 
+#백엔드 테스트용.
+async def _run_dummy_call(recipient_id: int) -> None:
+    """더미 entries로 LLM 분석 후 Spring /call-result로 결과를 전송한다."""
+    entries = random.choice(DUMMY_ENTRY_SETS)
+    started_at = datetime.now()
+
+    analyze_request = AnalyzeCallRequest(callLogId=0, recipientId=recipient_id, entries=entries)
+    loop = asyncio.get_event_loop()
+    result = await loop.run_in_executor(None, analyze_with_llm, analyze_request)
+
+    assessment = result["assessment"]
+    assessment["riskLevel"] = resolve_risk_level(assessment["overallRisk"])
+    adherence_records = fix_adherence_records(result.get("adherenceRecords", []))
+
+    ended_at = datetime.now()
+    payload = {
+        "recipient_id": recipient_id,
+        "call_log": {
+            "started_at": started_at.isoformat(),
+            "ended_at": ended_at.isoformat(),
+            "status": "COMPLETED",
+        },
+        "call_log_entries": [
+            {"sequence": e.sequence, "question": e.question, "answer": e.answer, "asked_at": started_at.isoformat()}
+            for e in entries
+        ],
+        "assessment": {
+            "measured_at": ended_at.isoformat(),
+            "depression_score": assessment["depressionScore"],
+            "emotional_stability": assessment["emotionalStability"],
+            "health_risk": assessment["healthRisk"],
+            "cognitive_score": assessment["cognitiveScore"],
+            "overall_risk": assessment["overallRisk"],
+            "risk_level": assessment["riskLevel"],
+            "summary": assessment["summary"],
+            "recommendation": assessment["recommendation"],
+        },
+        "adherence_records": [
+            {"adherence_type": r["adherenceType"], "slot": r["slot"], "is_needed": r["isNeeded"], "is_done": r["isDone"]}
+            for r in adherence_records
+        ],
+    }
+
+    spring_url = os.getenv("SPRING_BASE_URL", "http://localhost:8080") + "/call-result"
+    print(f"[SPRING] 전송 시작: {spring_url}")
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        resp = await client.post(spring_url, json=payload)
+        print(f"[SPRING] 응답 코드: {resp.status_code}")
+
 
 @app.post("/call")
 async def request_call(request: CallRequest, background_tasks: BackgroundTasks):
-    """Spring CallScheduler로부터 통화 요청을 받아 claw-ops로 전화를 발신한다.
-    즉시 200을 반환하고 전화 발신은 백그라운드에서 처리한다."""
-    background_tasks.add_task(initiate_call, request.recipientId, request.phoneNumber)
+    """Spring CallScheduler로부터 통화 요청을 받아 더미 entries로 LLM 분석을 실행한다.
+    즉시 200을 반환하고 분석은 백그라운드에서 처리한다."""
+    background_tasks.add_task(_run_dummy_call, request.recipientId)
+    #background_tasks.add_task(initiate_call, request.recipientId)
     return {"status": "accepted"}
 
 

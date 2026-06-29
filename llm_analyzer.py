@@ -113,9 +113,11 @@ def build_transcript_text(request: AnalyzeCallRequest) -> str:
 def analyze_with_llm(request: AnalyzeCallRequest, max_retries: int = 2) -> dict:
     transcript = build_transcript_text(request)
 
+    print("[LLM] 분석 시작")
     client = _get_client()
     last_raw = ""
     for attempt in range(max_retries + 1):
+        print(f"[LLM] Gemini 호출 시도 {attempt + 1}")
         response = client.chat.completions.create(
             model="gemini-2.5-flash",
             messages=[
@@ -129,9 +131,12 @@ def analyze_with_llm(request: AnalyzeCallRequest, max_retries: int = 2) -> dict:
                 }
             ],
             temperature=0,
+            max_tokens=4096,
         )
 
+        print("[LLM] Gemini 응답 수신 완료")
         last_raw = response.choices[0].message.content
+        print(f"[LLM] 응답 내용: {last_raw[:100]}")
 
         # Gemini가 ```json ... ``` 블록으로 감싸서 반환하는 경우 제거
         cleaned = last_raw.strip()

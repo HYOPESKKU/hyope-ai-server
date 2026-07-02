@@ -9,6 +9,7 @@ from schemas import AnalyzeCallRequest, AnalyzeCallResponse, CallRequest
 from llm_analyzer import analyze_with_llm
 from claw_handler import initiate_call, handle_transcript
 from dummy_entries import DUMMY_ENTRY_SETS
+from voiceml import router as voiceml_router
 
 
 # 서버 시작 시점에 필수 환경변수 확인 — 요청이 들어온 뒤에 터지지 않도록
@@ -17,6 +18,7 @@ if not os.getenv("GEMINI_API_KEY"):
 
 
 app = FastAPI(title="HYOPE AI Analysis Server")
+app.include_router(voiceml_router)
 
 
 def resolve_risk_level(overall_risk: float) -> str:

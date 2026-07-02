@@ -5,7 +5,9 @@ import httpx
 from clawops import ClawOps
 
 from llm_analyzer import analyze_with_llm
+from phq_classifier import classify_phq_item, identify_phq_item
 from schemas import AnalyzeCallRequest, CallLogEntry
+from voiceml import clear_phq_dtmf, get_phq_dtmf_scores
 
 # call_id → {recipient_id, started_at} 매핑 — 통화 완료 후 삭제
 _call_registry: dict[str, dict] = {}
@@ -53,9 +55,34 @@ async def handle_transcript(call_id: str, transcript_url: str) -> None:
 
     llm_entries, spring_entries = _convert_segments(segments, started_at)
     if not llm_entries:
+        clear_phq_dtmf(call_id)
         return
 
-    # LLM 분석
+    # PHQ-9 분류: DTMF 점수 우선, verbal 응답은 정기검진.txt로 분류
+    phq_dtmf_scores = get_phq_dtmf_scores(call_id)
+    phq_results: list[dict] = []
+    for entry in llm_entries:
+        item_no = identify_phq_item(entry.question)
+        if item_no is None:
+            continue
+        if item_no in phq_dtmf_scores:
+            score = phq_dtmf_scores[item_no]
+            phq_results.append({
+                "item_no": item_no,
+                "score": score,
+                "risk_flag": item_no == 9 and score > 0,
+                "needs_followup": False,
+                "source": "dtmf",
+            })
+        else:
+            classified = classify_phq_item(item_no, entry.answer)
+            phq_results.append(classified)
+    clear_phq_dtmf(call_id)
+
+    # PHQ-9 item 9 risk_flag → riskLevel 최소 WARNING 보장
+    has_suicide_risk = any(r.get("risk_flag") for r in phq_results)
+
+    # 전체 LLM 분석
     result = analyze_with_llm(
         AnalyzeCallRequest(callLogId=0, recipientId=recipient_id, entries=llm_entries)
     )
@@ -70,6 +97,9 @@ async def handle_transcript(call_id: str, transcript_url: str) -> None:
         assessment["riskLevel"] = "WARNING"
     else:
         assessment["riskLevel"] = "HIGH"
+
+    if has_suicide_risk and assessment["riskLevel"] in ("OBSERVE", "CAUTION"):
+        assessment["riskLevel"] = "WARNING"
 
     adherence_records = [
         r for r in result.get("adherenceRecords", [])
@@ -104,6 +134,7 @@ async def handle_transcript(call_id: str, transcript_url: str) -> None:
             }
             for r in adherence_records
         ],
+        "phq_results": phq_results,
     }
 
     spring_url = os.getenv("SPRING_BASE_URL", "http://localhost:8080") + "/call-result"

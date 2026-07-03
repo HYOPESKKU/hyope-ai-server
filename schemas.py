@@ -1,5 +1,5 @@
 from pydantic import BaseModel, field_validator
-from typing import List, Literal
+from typing import Any, List, Literal, Optional
 from datetime import datetime
 
 
@@ -39,12 +39,24 @@ class AdherenceRecord(BaseModel):
     isDone: bool
 
 
+class PhqResult(BaseModel):
+    item_no: int
+    score: Optional[int]
+    risk_flag: bool
+    needs_followup: bool
+    confidence: str
+    raw_quote: str
+    note: str = ""
+    source: str = "verbal"
+
+
 class AnalyzeCallResponse(BaseModel):
     callLogId: int
     recipientId: int
     measuredAt: datetime
     assessment: AssessmentResult
     adherenceRecords: List[AdherenceRecord]
+    phqResults: List[PhqResult] = []
 
 
 class CallRequest(BaseModel):

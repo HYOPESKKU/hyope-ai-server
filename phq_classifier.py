@@ -4,7 +4,7 @@ from pathlib import Path
 
 from openai import OpenAI
 
-_PROMPT_PATH = Path(__file__).parent.parent / "정기검진.txt"
+_PROMPT_PATH = Path(__file__).parent / "monthly.txt"
 
 PHQ_QUESTIONS: dict[int, str] = {
     1: "지난 2주 동안, 일이나 여가 활동에서 흥미나 즐거움이 줄었나요?",

@@ -7,7 +7,7 @@ from datetime import datetime
 
 from schemas import AnalyzeCallRequest, AnalyzeCallResponse, CallRequest
 from llm_analyzer import analyze_with_llm
-from claw_handler import initiate_call, handle_transcript
+from claw_handler import initiate_call, agent, connect_agent
 from dummy_entries import DUMMY_ENTRY_SETS
 from voiceml import router as voiceml_router
 
@@ -19,6 +19,11 @@ if not os.getenv("GEMINI_API_KEY"):
 
 app = FastAPI(title="HYOPE AI Analysis Server")
 app.include_router(voiceml_router)
+
+
+@app.on_event("startup")
+async def startup():
+    await connect_agent()
 
 
 def resolve_risk_level(overall_risk: float) -> str:
@@ -60,7 +65,6 @@ def fix_adherence_records(records: list) -> list:
 
     return fixed
 
-#백엔드 테스트용.
 async def _run_dummy_call(recipient_id: int) -> None:
     """더미 entries로 LLM 분석 후 Spring /call-result로 결과를 전송한다."""
     entries = random.choice(DUMMY_ENTRY_SETS)
@@ -114,23 +118,21 @@ async def _run_dummy_call(recipient_id: int) -> None:
 async def request_call(request: CallRequest, background_tasks: BackgroundTasks):
     """Spring CallScheduler로부터 통화 요청을 받아 더미 entries로 LLM 분석을 실행한다.
     즉시 200을 반환하고 분석은 백그라운드에서 처리한다."""
-    background_tasks.add_task(_run_dummy_call, request.recipientId)
-    #background_tasks.add_task(initiate_call, request.recipientId)
+    background_tasks.add_task(initiate_call, request.recipientId, request.phoneNumber)
+    #background_tasks.add_task(_run_dummy_call, request.recipientId)
     return {"status": "accepted"}
 
 
-@app.post("/webhook/transcript")
-async def transcript_webhook(req: Request, background_tasks: BackgroundTasks):
-    """claw-ops STT 완료 웹훅 수신 — transcript.completed 이벤트만 처리한다."""
-    form = await req.form()
-    event = form.get("Event")
-
-    if event == "transcript.completed":
-        call_id = form.get("CallId")
-        transcript_url = form.get("TranscriptUrl")
-        background_tasks.add_task(handle_transcript, call_id, transcript_url)
-
-    return Response(status_code=200)
+# webhook은 agent 모드에서 agent.router가 처리하므로 비활성화
+# @app.post("/webhook/transcript")
+# async def transcript_webhook(req: Request, background_tasks: BackgroundTasks):
+#     form = await req.form()
+#     call_status = form.get("CallStatus")
+#     call_id = form.get("CallId")
+#     if call_status == "completed" and call_id:
+#         transcript_url = form.get("TranscriptUrl")
+#         background_tasks.add_task(handle_transcript, call_id, transcript_url)
+#     return Response(status_code=200)
 
 
 @app.get("/")

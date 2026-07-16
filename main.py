@@ -134,8 +134,8 @@ async def _run_dummy_call(recipient_id: int) -> None:
 async def request_call(request: CallRequest, background_tasks: BackgroundTasks):
     """Spring CallScheduler로부터 통화 요청을 받아 더미 entries로 LLM 분석을 실행한다.
     즉시 200을 반환하고 분석은 백그라운드에서 처리한다."""
-    #background_tasks.add_task(initiate_call, request.recipientId, request.phoneNumber)
-    background_tasks.add_task(_run_dummy_call, request.recipientId)
+    background_tasks.add_task(initiate_call, request.recipientId, request.phoneNumber)
+    #background_tasks.add_task(_run_dummy_call, request.recipientId)
     return {"status": "accepted"}
 
 

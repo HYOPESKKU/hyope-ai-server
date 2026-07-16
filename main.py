@@ -7,6 +7,7 @@ from datetime import datetime
 
 from schemas import AnalyzeCallRequest, AnalyzeCallResponse, CallRequest
 from llm_analyzer import analyze_with_llm
+from phq_classifier import classify_phq_item, identify_phq_item
 from claw_handler import initiate_call, agent, connect_agent
 from dummy_entries import DUMMY_ENTRY_SETS
 from voiceml import router as voiceml_router
@@ -178,12 +179,33 @@ async def analyze_call(request: AnalyzeCallRequest):
 
         adherence_records = fix_adherence_records(result.get("adherenceRecords", []))
 
+        # PHQ-9 발화 분류 (병렬)
+        loop = asyncio.get_event_loop()
+        phq_pairs = [
+            (identify_phq_item(e.question), e.answer)
+            for e in request.entries
+            if identify_phq_item(e.question) is not None
+        ]
+        if phq_pairs:
+            phq_raw = await asyncio.gather(
+                *[loop.run_in_executor(None, classify_phq_item, item_no, answer)
+                  for item_no, answer in phq_pairs],
+                return_exceptions=True,
+            )
+            phq_results = [r for r in phq_raw if isinstance(r, dict)]
+        else:
+            phq_results = []
+
+        if any(r.get("risk_flag") for r in phq_results) and assessment["riskLevel"] in ("OBSERVE", "CAUTION"):
+            assessment["riskLevel"] = "WARNING"
+
         return {
             "callLogId": request.callLogId,
             "recipientId": request.recipientId,
             "measuredAt": datetime.now(),
             "assessment": assessment,
-            "adherenceRecords": adherence_records
+            "adherenceRecords": adherence_records,
+            "phqResults": phq_results,
         }
 
     except HTTPException:

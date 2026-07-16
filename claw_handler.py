@@ -147,10 +147,15 @@ async def on_end(call):
         "phq_results": [],
     }
 
-    spring_url = os.getenv("SPRING_BASE_URL", "http://localhost:8080") + "/call-result"
+    spring_url = os.getenv("SPRING_BASE_URL", "http://localhost:8080") + "/internal/call-results"
+    internal_api_key = os.getenv("INTERNAL_API_KEY")
     print(f"[AGENT] Spring 전송: {spring_url}")
     async with httpx.AsyncClient(timeout=10.0) as http:
-        resp = await http.post(spring_url, json=payload)
+        resp = await http.post(
+            spring_url,
+            json=payload,
+            headers={"X-API-KEY": internal_api_key}
+        )
     print(f"[AGENT] Spring 응답: {resp.status_code}")
 
 

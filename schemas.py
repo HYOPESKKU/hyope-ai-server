@@ -62,3 +62,4 @@ class AnalyzeCallResponse(BaseModel):
 class CallRequest(BaseModel):
     recipientId: int
     phoneNumber: str
+    guardianPhoneNumber: str = ""

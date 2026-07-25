@@ -63,3 +63,19 @@ class CallRequest(BaseModel):
     recipientId: int
     phoneNumber: str
     guardianPhoneNumber: str = ""
+
+
+class CallResultsEntry(BaseModel):
+    sequence: int
+    question: str
+    answer: str
+    asked_at: datetime
+
+
+class CallResultsRequest(BaseModel):
+    """voice_agent.py가 통화 종료 후 /internal/report-call-results로 보내는 요청 바디.
+    voice_agent.py는 이 스키마를 통해서만 main.py와 접점을 가진다(직접 import 없음)."""
+    recipient_id: int
+    started_at: datetime
+    ended_at: datetime
+    entries: List[CallResultsEntry]

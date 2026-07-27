@@ -3,9 +3,9 @@ import asyncio
 import httpx
 from fastapi import FastAPI, HTTPException, BackgroundTasks, Header, Depends
 
-from schemas import AnalyzeCallRequest, CallRequest, CallLogEntry, CallResultsRequest
-from llm_analyzer import analyze_with_llm
-from phq_classifier import classify_phq_item, identify_phq_item
+from data.schemas import AnalyzeCallRequest, CallRequest, CallLogEntry, CallResultsRequest
+from eval.llm_analyzer import analyze_with_llm
+from eval.phq_classifier import classify_phq_item, identify_phq_item
 from voice_agent import initiate_call, agent, connect_agent
 
 app = FastAPI(title="HYOPE AI Analysis Server")

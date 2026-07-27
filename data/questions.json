@@ -1,143 +1,80 @@
 {
-  "mental_health": {
-    "depression_gds5": {
-      "name": "Hoyl GDS-5",
-      "scoring": {
-        "type": "count_positive",
-        "threshold": 2,
-        "rule": "우울 방향으로 응답한 항목이 2개 이상이면 우울 증상이 있는 것으로 판단"
-      },
-      "items": [
-        {"id": "gds5_1", "question": "근본적으로 생활에 만족하십니까?", "positive_answer": "no"},
-        {"id": "gds5_2", "question": "자주 지루하다고 느끼십니까?", "positive_answer": "yes"},
-        {"id": "gds5_3", "question": "자주 무력감을 느끼십니까?", "positive_answer": "yes"},
-        {"id": "gds5_4", "question": "밖에 나가 새로운 일을 하는 것보다 집에 있는 것이 좋습니까?", "positive_answer": "yes"},
-        {"id": "gds5_5", "question": "현재의 생활방식이 매우 가치 없다고 느끼십니까?", "positive_answer": "yes"}
-      ]
+  "depression_gds5": {
+    "name": "Hoyl GDS-5",
+    "instructions": {
+      "min_questions": 1,
+      "negative_signal": "1번은 '아니오'가 부정적 방향, 나머지 4개 문항은 '예'가 부정적 방향 응답",
+      "on_negative": "부정적 방향 응답이 감지되면 다음 카테고리로 넘어가지 말고 이 카테고리의 나머지 문항 중에서 추가로 질문해 더 자세히 확인할 것",
+      "note": null
     },
-    "anxiety_gad2": {
-      "name": "GAD-2",
-      "scoring": {
-        "type": "sum_score",
-        "scale": [
-          {"score": 0, "label": "전혀 없음"},
-          {"score": 1, "label": "며칠 동안"},
-          {"score": 2, "label": "절반 이상의 날 동안"},
-          {"score": 3, "label": "거의 매일"}
-        ],
-        "max_score": 6,
-        "threshold": 3,
-        "rule": "총점 0~6점, 3점 이상이면 불안장애 양성 스크리닝으로 판단"
-      },
-      "items": [
-        {"id": "gad2_1", "question": "초조하거나 불안하거나 조마조마한 느낌이 들었다"},
-        {"id": "gad2_2", "question": "걱정을 멈추거나 조절할 수 없었다"}
-      ]
-    },
-    "physical_health": {
-      "name": "자기평가 건강 단일문항 + 증상 체크리스트 (FRAIL)",
-      "scoring": {
-        "type": "composite",
-        "frail": {
-          "max_score": 5,
-          "bands": [
-            {"range": [0, 0], "label": "robust (건강)"},
-            {"range": [1, 2], "label": "pre-frail (전노쇠)"},
-            {"range": [3, 5], "label": "frail (노쇠)"}
-          ]
-        },
-        "rule": "FRAIL 3점 이상 또는 낙상 고위험 플래그 또는 자기평가 건강 '매우 나쁨' 중 하나라도 해당하면 이번 회차 '신체 건강 이상 징후: 높음'으로 분류"
-      },
-      "items": [
-        {
-          "id": "health_self_rating",
-          "question": "전반적으로 본인의 건강 상태를 어떻게 평가하십니까?",
-          "options": ["매우 좋음", "좋음", "보통", "나쁨", "매우 나쁨"],
-          "flag_if": "매우 나쁨"
-        },
-        {
-          "id": "frail_fatigue",
-          "question": "지난 4주간 얼마나 자주 피곤하다고 느끼셨습니까?",
-          "positive_answer": "대부분/항상 그렇다",
-          "frail_point": true
-        },
-        {
-          "id": "frail_stairs",
-          "question": "도움 없이 혼자서, 쉬지 않고 계단 10개를 오르는 데 어려움이 있으신가요?",
-          "positive_answer": "yes",
-          "frail_point": true
-        },
-        {
-          "id": "frail_walk",
-          "question": "도움 없이 혼자서, 한 블록(약 100m) 정도를 걷는 데 어려움이 있으신가요?",
-          "positive_answer": "yes",
-          "frail_point": true
-        },
-        {
-          "id": "frail_illness",
-          "question": "의사로부터 다음 11개 질환 중 5개 이상을 진단받은 적이 있으신가요? (고혈압, 당뇨, 암, 만성폐질환, 심근경색, 울혈성심부전, 협심증, 천식, 관절염, 뇌졸중, 신장질환)",
-          "positive_answer": "yes",
-          "frail_point": true
-        },
-        {
-          "id": "frail_weight_loss",
-          "question": "지난 1년간 의도치 않게 체중이 5% 이상 줄었나요?",
-          "positive_answer": "yes",
-          "frail_point": true
-        },
-        {
-          "id": "fall_gate",
-          "question": "지난 1년간 넘어지신 적이 있으신가요?",
-          "positive_answer": "yes",
-          "gate_for": "fall_followup"
-        }
-      ],
-      "conditional_followup": {
-        "id": "fall_followup",
-        "trigger_item": "fall_gate",
-        "trigger_answer": "yes",
-        "note": "이번 통화 안에서 조건부로 추가 시행",
-        "items": [
-          {"id": "fall_unsteady", "question": "서 있거나 걸을 때 불안정하다고 느끼시나요?"},
-          {"id": "fall_worry", "question": "넘어질까봐 걱정되시나요?"}
-        ],
-        "flag_rule": "둘 중 하나라도 '예'면 낙상 고위험 플래그"
-      }
-    },
-    "cognitive_sis": {
-      "name": "SIS",
-      "scoring": {
-        "type": "sum_score",
-        "max_score": 6,
-        "threshold": 3,
-        "rule": "점수가 높을수록 인지기능이 좋은 것으로 해석. 3개 이상 오류(총점 3점 이하)면 인지장애를 시사"
-      },
-      "delayed_recall": {
-        "encode_question": "제가 단어 세 개를 말씀드릴게요 — 사과, 탁자, 동전. 이따 다시 여쭤볼 테니 기억해 두세요.",
-        "recall_question": "아까 말씀드렸던 세 단어, 기억나시는 대로 말씀해주시겠어요?",
-        "words": ["사과", "탁자", "동전"],
-        "max_score": 3
-      },
-      "orientation": {
-        "items": [
-          {"id": "sis_day", "question": "오늘이 무슨 요일인지 아시나요?", "target": "요일"},
-          {"id": "sis_month", "question": "지금이 몇 월인지 아시나요?", "target": "월"},
-          {"id": "sis_year", "question": "올해가 몇 년도인지 아시나요?", "target": "연도"}
-        ],
-        "max_score": 3
-      }
-    }
+    "items": [
+      {"id": "gds5_1", "question": "근본적으로 생활에 만족하십니까?"},
+      {"id": "gds5_2", "question": "자주 지루하다고 느끼십니까?"},
+      {"id": "gds5_3", "question": "자주 무력감을 느끼십니까?"},
+      {"id": "gds5_4", "question": "밖에 나가 새로운 일을 하는 것보다 집에 있는 것이 좋습니까?"},
+      {"id": "gds5_5", "question": "현재의 생활방식이 매우 가치 없다고 느끼십니까?"}
+    ]
   },
-  "daily_check": [
-    {
-      "id": "medication",
-      "type": "MEDICATION",
-      "question": "오늘 약은 챙겨 드셨어요?"
+  "anxiety_gad2": {
+    "name": "GAD-2",
+    "instructions": {
+      "min_questions": 1,
+      "negative_signal": "'절반 이상의 날 동안' 또는 '거의 매일' 수준으로 답하면 부정적 신호",
+      "on_negative": "부정적 신호가 감지되면 다음 카테고리로 넘어가지 말고 이 카테고리의 나머지 문항을 추가로 질문해 더 자세히 확인할 것",
+      "note": null
     },
-    {
-      "id": "meal",
-      "type": "MEAL",
-      "question": "오늘 식사는 하셨어요?"
-    }
-  ]
+    "items": [
+      {"id": "gad2_1", "question": "초조하거나 불안하거나 조마조마한 느낌이 들었다"},
+      {"id": "gad2_2", "question": "걱정을 멈추거나 조절할 수 없었다"}
+    ]
+  },
+  "physical_health": {
+    "name": "자기평가 건강 + FRAIL",
+    "instructions": {
+      "min_questions": 1,
+      "negative_signal": "health_self_rating은 '나쁨'/'매우 나쁨', 나머지 FRAIL·낙상 문항은 '예'가 부정적 신호",
+      "on_negative": "부정적 신호가 감지되면 다음 카테고리로 넘어가지 말고 이 카테고리의 나머지 문항 중에서 추가로 질문해 더 자세히 확인할 것. fall_gate에 '예'로 답하면 depends_on으로 연결된 문항을 이번 통화 안에서 반드시 추가로 질문할 것",
+      "note": null
+    },
+    "items": [
+      {"id": "health_self_rating", "question": "전반적으로 본인의 건강 상태를 어떻게 평가하십니까?"},
+      {"id": "frail_fatigue", "question": "지난 4주간 얼마나 자주 피곤하다고 느끼셨습니까?"},
+      {"id": "frail_stairs", "question": "도움 없이 혼자서, 쉬지 않고 계단 10개를 오르는 데 어려움이 있으신가요?"},
+      {"id": "frail_walk", "question": "도움 없이 혼자서, 한 블록(약 100m) 정도를 걷는 데 어려움이 있으신가요?"},
+      {"id": "frail_illness", "question": "의사로부터 다음 11개 질환 중 5개 이상을 진단받은 적이 있으신가요? (고혈압, 당뇨, 암, 만성폐질환, 심근경색, 울혈성심부전, 협심증, 천식, 관절염, 뇌졸중, 신장질환)"},
+      {"id": "frail_weight_loss", "question": "지난 1년간 의도치 않게 체중이 5% 이상 줄었나요?"},
+      {"id": "fall_gate", "question": "지난 1년간 넘어지신 적이 있으신가요?"},
+      {"id": "fall_unsteady", "question": "서 있거나 걸을 때 불안정하다고 느끼시나요?", "depends_on": {"item": "fall_gate", "if_answer": "예"}},
+      {"id": "fall_worry", "question": "넘어질까봐 걱정되시나요?", "depends_on": {"item": "fall_gate", "if_answer": "예"}}
+    ]
+  },
+  "cognitive_sis": {
+    "name": "SIS",
+    "instructions": {
+      "min_questions": 1,
+      "negative_signal": "sis_recall에서 sis_encode 때 말해준 단어 3개 중 기억 못한 게 있거나, sis_day/sis_month/sis_year 중 틀리게 답하면 부정적 신호",
+      "on_negative": "부정적 신호가 감지되면 다음 카테고리로 넘어가지 말고 이 카테고리의 나머지 문항을 추가로 질문해 더 자세히 확인할 것",
+      "note": "sis_encode와 sis_recall은 둘 중 하나만 하지 말고 반드시 세트로 함께 진행할 것"
+    },
+    "items": [
+      {"id": "sis_encode", "type": "statement", "question": "제가 단어 세 개를 말씀드릴게요 — 이따 다시 여쭤볼 테니 기억해 두세요.", "pair_with": "sis_recall", "note": "질문이 아니라 어르신께 미리 들려주는 발화문. 채점 대상이 아니며, 매번 랜덤한 일상 단어 3개를 새로 생성해서 말한다"},
+      {"id": "sis_recall", "type": "question", "question": "아까 말씀드렸던 세 단어, 기억나시는 대로 말씀해주시겠어요?", "pair_with": "sis_encode", "note": "sis_encode 직후 반드시 이어서 질문 — 실제 채점은 여기서 이뤄진다"},
+      {"id": "sis_day", "question": "오늘이 무슨 요일인지 아시나요?"},
+      {"id": "sis_month", "question": "지금이 몇 월인지 아시나요?"},
+      {"id": "sis_year", "question": "올해가 몇 년도인지 아시나요?"}
+    ]
+  },
+  "daily_check": {
+    "name": "복약/식사 확인",
+    "instructions": {
+      "min_questions": 2,
+      "negative_signal": null,
+      "on_negative": null,
+      "note": "medication, meal 두 문항은 예외 없이 이번 통화 세션에서 반드시 둘 다 질문할 것"
+    },
+    "items": [
+      {"id": "medication", "question": "오늘 약은 챙겨 드셨어요?"},
+      {"id": "meal", "question": "오늘 식사는 하셨어요?"}
+    ]
+  }
 }

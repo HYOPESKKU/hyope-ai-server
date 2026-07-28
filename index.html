@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<title>HYOPE static_question 테스트</title>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, "Malgun Gothic", sans-serif;
+    background: #f4f5f7;
+    display: flex;
+    justify-content: center;
+  }
+  #app {
+    width: 100%;
+    max-width: 640px;
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+    background: #fff;
+  }
+  header {
+    padding: 14px 16px;
+    border-bottom: 1px solid #e5e7eb;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  header h1 {
+    font-size: 15px;
+    margin: 0;
+    color: #111827;
+  }
+  header button {
+    font-size: 12px;
+    padding: 6px 10px;
+    border: 1px solid #d1d5db;
+    background: #fff;
+    border-radius: 6px;
+    cursor: pointer;
+  }
+  #messages {
+    flex: 1;
+    overflow-y: auto;
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .msg {
+    max-width: 78%;
+    padding: 10px 13px;
+    border-radius: 14px;
+    line-height: 1.45;
+    font-size: 14px;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+  .msg.user {
+    align-self: flex-end;
+    background: #2563eb;
+    color: #fff;
+    border-bottom-right-radius: 4px;
+  }
+  .msg.assistant {
+    align-self: flex-start;
+    background: #f3f4f6;
+    color: #111827;
+    border-bottom-left-radius: 4px;
+  }
+  .msg.system {
+    align-self: center;
+    background: none;
+    color: #9ca3af;
+    font-size: 12px;
+    max-width: 100%;
+  }
+  form {
+    display: flex;
+    gap: 8px;
+    padding: 12px;
+    border-top: 1px solid #e5e7eb;
+  }
+  input[type="text"] {
+    flex: 1;
+    padding: 10px 12px;
+    border: 1px solid #d1d5db;
+    border-radius: 8px;
+    font-size: 14px;
+  }
+  button[type="submit"] {
+    padding: 10px 16px;
+    border: none;
+    border-radius: 8px;
+    background: #2563eb;
+    color: #fff;
+    font-size: 14px;
+    cursor: pointer;
+  }
+  button:disabled {
+    opacity: 0.5;
+    cursor: default;
+  }
+</style>
+</head>
+<body>
+<div id="app">
+  <header>
+    <h1>static_question 테스트 (음성 대신 텍스트)</h1>
+    <button id="reset-btn" type="button">새 대화</button>
+  </header>
+  <div id="messages"></div>
+  <form id="chat-form">
+    <input id="input" type="text" placeholder="어르신 역할로 답해보세요..." autocomplete="off" />
+    <button type="submit">전송</button>
+  </form>
+</div>
+
+<script>
+  let sessionId = crypto.randomUUID();
+
+  const messagesEl = document.getElementById("messages");
+  const formEl = document.getElementById("chat-form");
+  const inputEl = document.getElementById("input");
+  const resetBtn = document.getElementById("reset-btn");
+
+  function addMessage(role, text) {
+    const div = document.createElement("div");
+    div.className = "msg " + role;
+    div.textContent = text;
+    messagesEl.appendChild(div);
+    messagesEl.scrollTop = messagesEl.scrollHeight;
+  }
+
+  function resetConversation() {
+    sessionId = crypto.randomUUID();
+    messagesEl.innerHTML = "";
+    addMessage("system", "새 대화 시작 (session_id: " + sessionId.slice(0, 8) + ")");
+  }
+
+  resetBtn.addEventListener("click", resetConversation);
+
+  formEl.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const text = inputEl.value.trim();
+    if (!text) return;
+
+    addMessage("user", text);
+    inputEl.value = "";
+    inputEl.disabled = true;
+
+    try {
+      const res = await fetch("/test-chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ session_id: sessionId, message: text }),
+      });
+      if (!res.ok) {
+        addMessage("system", "에러: " + res.status);
+        return;
+      }
+      const data = await res.json();
+      addMessage("assistant", data.reply || "(빈 응답)");
+    } catch (err) {
+      addMessage("system", "요청 실패: " + err);
+    } finally {
+      inputEl.disabled = false;
+      inputEl.focus();
+    }
+  });
+
+  resetConversation();
+</script>
+</body>
+</html>

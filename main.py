@@ -1,12 +1,17 @@
+import json
 import os
 import asyncio
 import httpx
 from fastapi import FastAPI, HTTPException, BackgroundTasks, Header, Depends
+from fastapi.responses import FileResponse
+from pathlib import Path
+from pydantic import BaseModel
+from openai import OpenAI
 
 from data.schemas import AnalyzeCallRequest, CallRequest, CallLogEntry, CallResultsRequest
 from eval.llm_analyzer import analyze_with_llm
 from eval.phq_classifier import classify_phq_item, identify_phq_item
-from voice_agent import initiate_call, agent, connect_agent
+from voice_agent import initiate_call, agent, connect_agent, SYSTEM_PROMPT, _new_progress, _pick_next_question, static_question
 
 app = FastAPI(title="HYOPE AI Analysis Server")
 
@@ -201,3 +206,89 @@ async def report_call_results_endpoint(request: CallResultsRequest):
     print(f"[MAIN] Spring 응답: {resp.status_code}")
 
     return {"status": "ok"}
+
+
+# ══════════════════════════════════════════════════════════════════
+# 텍스트 채팅 테스트 하네스 (개발 전용 — 실제 통화 없이 SYSTEM_PROMPT와
+# static_question tool 흐름을 타이핑으로 검증하기 위한 용도)
+# ══════════════════════════════════════════════════════════════════
+
+_test_chat_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+
+# session_id → {"history": [...], "progress": voice_agent._new_progress() 결과}
+# 실제 통화의 _call_registry와는 완전히 별개 — voice_agent.py를 건드리지 않는다.
+_test_chat_sessions: dict[str, dict] = {}
+
+_STATIC_QUESTION_TOOL_SCHEMA = {
+    "type": "function",
+    "function": {
+        "name": "static_question",
+        "description": (static_question.__doc__ or "").strip(),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "category": {
+                    "type": "string",
+                    "description": "Category key to keep drilling into. Only takes effect when was_negative is true.",
+                },
+                "was_negative": {
+                    "type": "boolean",
+                    "description": "Whether the resident's last answer matched that question's negative_signal.",
+                },
+            },
+            "required": [],
+        },
+    },
+}
+
+
+class TestChatRequest(BaseModel):
+    session_id: str
+    message: str
+
+
+@app.post("/test-chat")
+async def test_chat(request: TestChatRequest):
+    """음성 통화 없이 텍스트로 voice_agent의 SYSTEM_PROMPT + static_question tool
+    흐름을 테스트하는 개발용 엔드포인트. session_id별로 대화 기록과 진행 상태를
+    서버 메모리에 들고 있는다(서버 재시작하면 초기화됨)."""
+    session = _test_chat_sessions.setdefault(
+        request.session_id, {"history": [], "progress": _new_progress()}
+    )
+    session["history"].append({"role": "user", "content": request.message})
+
+    while True:
+        response = _test_chat_client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[{"role": "system", "content": SYSTEM_PROMPT}, *session["history"]],
+            tools=[_STATIC_QUESTION_TOOL_SCHEMA],
+        )
+        message = response.choices[0].message
+
+        if not message.tool_calls:
+            session["history"].append({"role": "assistant", "content": message.content})
+            return {"reply": message.content}
+
+        session["history"].append({
+            "role": "assistant",
+            "content": message.content,
+            "tool_calls": [tc.model_dump() for tc in message.tool_calls],
+        })
+        for tool_call in message.tool_calls:
+            args = json.loads(tool_call.function.arguments or "{}")
+            result = _pick_next_question(
+                session["progress"], args.get("category", ""), args.get("was_negative", False)
+            )
+            payload = result if result is not None else {"done": True}
+            session["history"].append({
+                "role": "tool",
+                "tool_call_id": tool_call.id,
+                "content": json.dumps(payload, ensure_ascii=False),
+            })
+        # tool 결과를 넣은 채로 루프를 돌아 모델의 다음 응답(텍스트 또는 추가 tool 호출)을 받는다.
+
+
+@app.get("/test")
+async def test_chat_page():
+    """index.html(텍스트 채팅 테스트 페이지)을 서빙한다."""
+    return FileResponse(Path(__file__).parent / "index.html")

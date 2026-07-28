@@ -8,11 +8,11 @@
       "note": null
     },
     "items": [
-      {"id": "gds5_1", "question": "근본적으로 생활에 만족하십니까?"},
-      {"id": "gds5_2", "question": "자주 지루하다고 느끼십니까?"},
-      {"id": "gds5_3", "question": "자주 무력감을 느끼십니까?"},
-      {"id": "gds5_4", "question": "밖에 나가 새로운 일을 하는 것보다 집에 있는 것이 좋습니까?"},
-      {"id": "gds5_5", "question": "현재의 생활방식이 매우 가치 없다고 느끼십니까?"}
+      {"id": "gds5_1", "question": "근본적으로 생활에 만족하신가요?"},
+      {"id": "gds5_2", "question": "자주 지루하다고 느끼시나요?"},
+      {"id": "gds5_3", "question": "자주 무력감을 느끼시나요?"},
+      {"id": "gds5_4", "question": "밖에 나가 새로운 일을 하는 것보다 집에 있는 것이 좋으신가요?"},
+      {"id": "gds5_5", "question": "현재의 생활방식이 매우 가치 없다고 느끼시나요?"}
     ]
   },
   "anxiety_gad2": {
@@ -24,8 +24,8 @@
       "note": null
     },
     "items": [
-      {"id": "gad2_1", "question": "초조하거나 불안하거나 조마조마한 느낌이 들었다"},
-      {"id": "gad2_2", "question": "걱정을 멈추거나 조절할 수 없었다"}
+      {"id": "gad2_1", "question": "최근 초조하거나 불안하거나 조마조마한 느낌이 드셨나요?"},
+      {"id": "gad2_2", "question": "최근 걱정을 멈추거나 조절하기 어려우셨나요?"}
     ]
   },
   "physical_health": {
@@ -37,12 +37,12 @@
       "note": null
     },
     "items": [
-      {"id": "health_self_rating", "question": "전반적으로 본인의 건강 상태를 어떻게 평가하십니까?"},
-      {"id": "frail_fatigue", "question": "지난 4주간 얼마나 자주 피곤하다고 느끼셨습니까?"},
+      {"id": "health_self_rating", "question": "전반적으로 본인의 건강 상태를 어떻게 평가하시나요?"},
+      {"id": "frail_fatigue", "question": "지난 4주간 얼마나 자주 피곤하다고 느끼셨나요?"},
       {"id": "frail_stairs", "question": "도움 없이 혼자서, 쉬지 않고 계단 10개를 오르는 데 어려움이 있으신가요?"},
       {"id": "frail_walk", "question": "도움 없이 혼자서, 한 블록(약 100m) 정도를 걷는 데 어려움이 있으신가요?"},
       {"id": "frail_illness", "question": "의사로부터 다음 11개 질환 중 5개 이상을 진단받은 적이 있으신가요? (고혈압, 당뇨, 암, 만성폐질환, 심근경색, 울혈성심부전, 협심증, 천식, 관절염, 뇌졸중, 신장질환)"},
-      {"id": "frail_weight_loss", "question": "지난 1년간 의도치 않게 체중이 5% 이상 줄었나요?"},
+      {"id": "frail_weight_loss", "question": "지난 1년간 의도치 않게 체중이 5% 이상 줄어드셨나요?"},
       {"id": "fall_gate", "question": "지난 1년간 넘어지신 적이 있으신가요?"},
       {"id": "fall_unsteady", "question": "서 있거나 걸을 때 불안정하다고 느끼시나요?", "depends_on": {"item": "fall_gate", "if_answer": "예"}},
       {"id": "fall_worry", "question": "넘어질까봐 걱정되시나요?", "depends_on": {"item": "fall_gate", "if_answer": "예"}}
@@ -54,11 +54,11 @@
       "min_questions": 1,
       "negative_signal": "sis_recall에서 sis_encode 때 말해준 단어 3개 중 기억 못한 게 있거나, sis_day/sis_month/sis_year 중 틀리게 답하면 부정적 신호",
       "on_negative": "부정적 신호가 감지되면 다음 카테고리로 넘어가지 말고 이 카테고리의 나머지 문항을 추가로 질문해 더 자세히 확인할 것",
-      "note": "sis_encode와 sis_recall은 둘 중 하나만 하지 말고 반드시 세트로 함께 진행할 것"
+      "note": "sis_encode와 sis_recall은 둘 중 하나만 하지 말고 반드시 세트로 함께 진행할 것. 이 카테고리 문항들은 '이건 형식적으로 여쭤보는 거예요' 식으로 가볍게 완충해서 물어보고, 정답 여부는 절대 언급하지 말고 항상 같은 톤으로 반응할 것"
     },
     "items": [
       {"id": "sis_encode", "type": "statement", "question": "제가 단어 세 개를 말씀드릴게요 — 이따 다시 여쭤볼 테니 기억해 두세요.", "pair_with": "sis_recall", "note": "질문이 아니라 어르신께 미리 들려주는 발화문. 채점 대상이 아니며, 매번 랜덤한 일상 단어 3개를 새로 생성해서 말한다"},
-      {"id": "sis_recall", "type": "question", "question": "아까 말씀드렸던 세 단어, 기억나시는 대로 말씀해주시겠어요?", "pair_with": "sis_encode", "note": "sis_encode 직후 반드시 이어서 질문 — 실제 채점은 여기서 이뤄진다"},
+      {"id": "sis_recall", "type": "question", "question": "아까 말씀드렸던 세 단어가 기억나시나요?", "pair_with": "sis_encode", "note": "sis_encode 직후 반드시 이어서 질문 — 실제 채점은 여기서 이뤄진다"},
       {"id": "sis_day", "question": "오늘이 무슨 요일인지 아시나요?"},
       {"id": "sis_month", "question": "지금이 몇 월인지 아시나요?"},
       {"id": "sis_year", "question": "올해가 몇 년도인지 아시나요?"}
@@ -70,11 +70,17 @@
       "min_questions": 2,
       "negative_signal": null,
       "on_negative": null,
-      "note": "medication, meal 두 문항은 예외 없이 이번 통화 세션에서 반드시 둘 다 질문할 것"
+      "note": "medication, meal 두 문항은 예외 없이 이번 통화 세션에서 반드시 둘 다 질문할 것",
+      "context_bridge_examples": {
+        "아침": "지금 아침 시간대인 것 같은데, 아침은 잘 드셨나요?",
+        "점심": "지금 점심시간이 지난 것 같은데, 점심은 잘 챙겨 드셨나요?",
+        "저녁": "지금 시간이 저녁은 넘은 것 같은데, 저녁은 어떻게 잘 드셨나요?",
+        "밤": "벌써 밤이 된 것 같은데, 오늘 하루 식사는 잘 챙겨 드셨나요?"
+      }
     },
     "items": [
-      {"id": "medication", "question": "오늘 약은 챙겨 드셨어요?"},
-      {"id": "meal", "question": "오늘 식사는 하셨어요?"}
+      {"id": "medication", "question": "오늘 약은 챙겨 드셨나요?"},
+      {"id": "meal", "question": "오늘 식사는 하셨나요?"}
     ]
   }
 }

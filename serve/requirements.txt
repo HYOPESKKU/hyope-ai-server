@@ -1,0 +1,9 @@
+# 서빙 전용 — 학습 의존성(datasets, sklearn, matplotlib 등)은 넣지 않는다.
+fastapi
+uvicorn[standard]
+pydantic
+transformers
+# CPU 전용 휠. 기본 torch는 CUDA 런타임까지 끌고 와서 이미지가 수 GB 커진다.
+# GPU 인스턴스에 올릴 거면 이 줄과 Dockerfile의 --index-url을 지운다.
+torch
+huggingface_hub

@@ -29,7 +29,17 @@ ROOT = Path(__file__).resolve().parent  # server.py가 이제 프로젝트 루�
 
 load_dotenv()
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+# * 서드파티(websockets/httpx/watchfiles 등)는 ROOT_LOG_LEVEL로 조용히 시키고, 우리 로거
+# * (dispatcher/tools/worker)만 LOG_LEVEL로 따로 살려서 요청 로그 소음과 우리 로그를 분리한다.
+# * .env에서 값만 바꿔서 재시작하면 되고, 코드는 안 건드려도 된다.
+LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO").upper()
+ROOT_LOG_LEVEL = os.environ.get("ROOT_LOG_LEVEL", "WARNING").upper()
+
+logging.basicConfig(level=ROOT_LOG_LEVEL, format="%(asctime)s %(levelname)s %(message)s")
+for _name in ("dispatcher", "tools", "worker"):
+    logging.getLogger(_name).setLevel(LOG_LEVEL)
+logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
+
 log = logging.getLogger("dispatcher")
 
 @asynccontextmanager
@@ -37,7 +47,10 @@ async def _lifespan(app: FastAPI):
     # worker.py의 폴링 루프(runtime/ 알림·통화결과 파일 -> Spring)를 같은 프로세스의 백그라운드
     # 스레드로 돌린다 — Railway에 별도 서비스로 올리면 컨테이너가 갈려서 runtime/ 파일을
     # 서로 못 보게 된다. 같은 프로세스에 두면 파일시스템이 자동으로 공유된다.
-    threading.Thread(target=worker.run_forever, daemon=True).start()
+    # ENABLE_SPRING_WORKER=false면 이 스레드를 아예 안 띄운다 — Spring/hyope-serve 없이
+    # 에이전트만 단독으로(웹 데모) 돌릴 때 사용. 기본값은 켜짐(기존과 동일한 동작).
+    if os.environ.get("ENABLE_SPRING_WORKER", "true").strip().lower() != "false":
+        threading.Thread(target=worker.run_forever, daemon=True).start()
     yield
 
 app = FastAPI(title="HYOPE AI voice agent", lifespan=_lifespan)
@@ -173,6 +186,15 @@ async def _pump_upstream(upstream, sink: OutputSink, state: dict, session_id: st
 
     # 대화 로깅용 — 에이전트 발화는 delta로 쪼개져 오므로 한 턴 끝날 때까지 모았다가 한 줄로 찍는다.
     agent_text_parts: list[str] = []
+    # 어르신 발화도 마찬가지 — checkin_start처럼 response.create를 안 거는 무음 구간에서는
+    # input_audio_transcription.completed가 여러 번 올 수 있다(짧은 말을 여러 번 나눠 함).
+    # 매번 바로 call_log_entries/말풍선을 확정하면 그 사이 이어 말한 내용이 조각조각 분리되어
+    # 버린다 — 에이전트가 실제로 다음 응답을 낼 때(response.done)까지 모았다가 한 번에 확정한다.
+    elder_text_parts: list[str] = []
+    # 진단 결과: transcription.completed는 item당 status=in_progress -> completed 두 번 오고,
+    # 드물게 같은 item_id가 completed까지 통째로 한 번 더 온다(업스트림 재전송으로 보임) —
+    # 최종본만, item당 한 번만 받아들이기 위한 추적 세트.
+    _completed_transcription_item_ids: set[str] = set()
 
     def _mark_answer_started() -> None:
         """response.output_audio(.transcript).delta가 오는 시점 = LLM 답변 생성 시작."""
@@ -204,20 +226,23 @@ async def _pump_upstream(upstream, sink: OutputSink, state: dict, session_id: st
             })
 
         elif etype == "conversation.item.input_audio_transcription.completed":
+            # status=in_progress인 중간 버전은 건너뛴다 — completed만 최종 텍스트다.
+            if event.get("status") != "completed":
+                continue
+            # 같은 item_id로 completed가 또 오면(업스트림 재전송) 무시 — item당 한 번만 반영.
+            item_id = event.get("item_id")
+            if item_id in _completed_transcription_item_ids:
+                continue
+            if item_id is not None:
+                _completed_transcription_item_ids.add(item_id)
+
             timing["voice_in"] = time.perf_counter()
             transcript = event.get("transcript", "")
             log.info("\n[%s] 어르신: %s", session_id, transcript)  # 앞 줄바꿈으로 이전 턴과 구분
-            # 직전에 에이전트가 실제로 뭔가 물어봤을 때만 Q&A 쌍으로 기록한다 —
-            # 통화 시작 직후처럼 아직 아무 질문도 안 나간 상태의 발화는 짝지을 게 없다.
-            if state.get("_last_agent_utterance"):
-                state["call_log_entries"].append({
-                    "sequence": len(state["call_log_entries"]) + 1,
-                    "question": state["_last_agent_utterance"],
-                    "answer": transcript,
-                    "asked_at": state.get("_last_agent_utterance_at") or brain.spring_timestamp(),
-                })
+            delta = (" " if elder_text_parts else "") + transcript
+            elder_text_parts.append(transcript)
             await sink.send_event({
-                "type": "transcript", "role": "elder", "text": transcript,
+                "type": "transcript", "role": "elder", "delta": delta,
             })
         #모델이 tool 호출
         elif etype == "response.function_call_arguments.done":
@@ -269,6 +294,17 @@ async def _pump_upstream(upstream, sink: OutputSink, state: dict, session_id: st
             if awaiting_continuation:
                 continue  # 곧 이어지는 응답이 있다 — 아직 클라이언트에 turn_done을 보낼 때가 아니다
             if agent_text_parts:  # 이 턴에서 실제로 뭔가 말했으면 한 줄로 모아서 찍는다
+                # 직전에 에이전트가 실제로 뭔가 물어봤을 때만 Q&A 쌍으로 기록한다 —
+                # 통화 시작 직후처럼 아직 아무 질문도 안 나간 상태의 발화는 짝지을 게 없다.
+                if elder_text_parts:
+                    if state.get("_last_agent_utterance"):
+                        state["call_log_entries"].append({
+                            "sequence": len(state["call_log_entries"]) + 1,
+                            "question": state["_last_agent_utterance"],
+                            "answer": " ".join(elder_text_parts),
+                            "asked_at": state.get("_last_agent_utterance_at") or brain.spring_timestamp(),
+                        })
+                    elder_text_parts.clear()
                 joined = "".join(agent_text_parts)
                 log.info("[%s] 에이전트: %s", session_id, joined)
                 state["_last_agent_utterance"] = joined

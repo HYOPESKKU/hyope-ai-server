@@ -223,13 +223,17 @@ def write_call_result_outbox(state: dict, status: str) -> None:
 
 def write_minimal_call_result(recipient_id, status: str) -> None:
     # * state 없이(발신 실패, 무응답/통화중 콜백처럼 통화가 시작도 못 한 경우) 빈 값으로 최소 결과만 기록한다.
+    # * started_at을 None으로 두면 Spring CallResultService.saveAll()의 필수값 검증(둘 다 non-null)에
+    # * 걸려서 이 결과가 영원히 저장 실패 → 재시도 루프에 빠진다. 시도한 시각을 그대로 쓴다(연결이 안
+    # * 됐을 뿐 "시도"는 이 시점에 일어났으므로 의미상으로도 맞다).
 
+    now = spring_timestamp()
     CALL_RESULT_OUTBOX.parent.mkdir(parents=True, exist_ok=True)
     with open(CALL_RESULT_OUTBOX, "a") as f:
         f.write(json.dumps({
             "id": f"CR-{uuid.uuid4().hex[:12]}",
             "recipient_id": recipient_id,
-            "call_log": {"started_at": None, "ended_at": spring_timestamp(), "status": status},
+            "call_log": {"started_at": now, "ended_at": now, "status": status},
             "call_log_entries": [], "logic_data": {}, "emergencies": [], "profile_updates": [],
             "filed_at": time.time(),
         }, ensure_ascii=False) + "\n")

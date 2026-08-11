@@ -124,6 +124,7 @@ async def _pump_upstream(upstream, sink: OutputSink, state: dict, session_id: st
 
     ending = False
     agent_text_parts: list[str] = []
+    elder_text_parts: list[str] = []
     try:
         async for raw in upstream:
             event = json.loads(raw)
@@ -137,16 +138,38 @@ async def _pump_upstream(upstream, sink: OutputSink, state: dict, session_id: st
                         await sink.send_audio(inline["data"])
                 out_text = (server_content.get("outputTranscription") or {}).get("text")
                 if out_text:
+                    if not agent_text_parts:  # 이 턴의 첫 델타 — call_log_entries.asked_at으로 쓸 시각을 못박는다
+                        state["_last_agent_utterance_at"] = brain.spring_timestamp()
                     agent_text_parts.append(out_text)
                     await sink.send_event({"type": "transcript", "role": "agent", "delta": out_text})
+                # * inputTranscription도 outputTranscription처럼 문장이 여러 조각(delta)으로 쪼개져 온다.
+                # * 조각마다 완결 텍스트로 취급해 보내면(과거엔 "text"로 보냈음) 브라우저에서 말풍선이
+                # * 조각 수만큼 새로 열려버린다 — 여기서도 agent와 동일하게 누적한다.
                 in_text = (server_content.get("inputTranscription") or {}).get("text")
                 if in_text:
-                    log.info("[%s] 어르신: %s", session_id, in_text)
-                    await sink.send_event({"type": "transcript", "role": "elder", "text": in_text})
-                if server_content.get("turnComplete"):
-                    if agent_text_parts:
-                        log.info("[%s] gemini: %s", session_id, "".join(agent_text_parts))
-                        agent_text_parts.clear()
+                    elder_text_parts.append(in_text)
+                    await sink.send_event({"type": "transcript", "role": "elder", "delta": in_text})
+                # * turnComplete는 "모델 턴이 끝났다"는 뜻일 뿐 "어르신 턴이 끝났다"는 보장이 아니다.
+                # * 툴 호출 후 응답을 이어가는 동안 모델이 아무 말도 안 하는 무음 턴에서도 turnComplete가
+                # * 여러 번 온다 — 그때마다 말풍선/call_log_entries를 확정하면 어르신이 그 사이 이어 말한
+                # * 내용이 조각조각 분리되어 버린다. agent_text_parts가 실제로 채워진 턴(=모델이 진짜로
+                # * 응답한 턴)에서만 확정한다.
+                if server_content.get("turnComplete") and agent_text_parts:
+                    if elder_text_parts:
+                        elder_answer = "".join(elder_text_parts)
+                        log.info("[%s] 어르신: %s", session_id, elder_answer)
+                        if state.get("_last_agent_utterance"):
+                            state["call_log_entries"].append({
+                                "sequence": len(state["call_log_entries"]) + 1,
+                                "question": state["_last_agent_utterance"],
+                                "answer": elder_answer,
+                                "asked_at": state.get("_last_agent_utterance_at") or brain.spring_timestamp(),
+                            })
+                        elder_text_parts.clear()
+                    joined = "".join(agent_text_parts)
+                    log.info("[%s] gemini: %s", session_id, joined)
+                    state["_last_agent_utterance"] = joined
+                    agent_text_parts.clear()
                     await sink.send_event({"type": "turn_done"})
                     if ending:
                         await sink.send_event({"type": "call_ended"})

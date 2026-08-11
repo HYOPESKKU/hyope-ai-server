@@ -93,55 +93,29 @@ def process_once() -> int:
 # --------------------------------------------------------------------------
 
 
-ASSESS_URL = os.environ.get("ASSESS_URL", "").strip()
-ASSESS_TIMEOUT = float(os.environ.get("ASSESS_TIMEOUT", "20"))
+def compute_assessment(call_log_entries: list, logic_data: dict, emergencies: list) -> tuple[dict, list]:
+    """실제 채점 모델 연동 전 스텁.
 
-
-def _placeholder_assessment(reason: str, measured_at: str) -> tuple[dict, list]:
-    """채점 서비스를 못 쓸 때. 진짜 값이 아님을 risk_level/summary에 박아둔다.
-
-    measured_at은 None을 쓰지 않는다 — Spring Assessment.measuredAt이 non-null이라
-    None을 보내면 DB엔 NULL로 저장되고, 프론트는 DateTime.parse(null)에서 그대로
-    죽어버린다("다시 시도" 에러 화면). 대신 통화 종료 시각(ended_at)을 쓴다.
+    별도 채점 모델이 call_log_entries/logic_data를 보고 depression_score 등 정규화된
+    점수와 adherence_records를 내는 게 최종 그림인데, 그 모델은 이번 작업 범위 밖이라
+    지금은 파이프라인(아웃박스 -> Spring 전송)을 끝까지 테스트할 수 있게 placeholder만
+    반환한다. 진짜 값이 아니므로 risk_level/summary에 명확히 표시해서 실수로 진짜 값처럼
+    쓰이지 않게 한다.
     """
-    log.warning("compute_assessment: %s — placeholder 반환", reason)
-    return {
-        "measured_at": measured_at,
-        "depression_score": 0.5, "emotional_stability": 0.5, "health_risk": 0.5,
-        "cognitive_score": 0.5, "overall_risk": 0.5, "risk_level": "OBSERVE",
-        "summary": f"채점 미연동({reason}) — placeholder 값입니다.",
-        "recommendation": "채점 서비스 연동 후 재확인 필요.",
-    }, []
-
-
-def compute_assessment(call_log_entries: list, logic_data: dict, emergencies: list, measured_at: str) -> tuple[dict, list]:
-    """채점 서비스(hyope-ai serve/)에 위임한다.
-
-    ASSESS_URL이 없으면 예전처럼 placeholder를 반환한다. 채점 서비스 없이도
-    통화 → Spring 전송 파이프라인은 그대로 돌아야 하기 때문이다.
-
-    여기는 통화가 끝난 뒤 worker가 폴링하며 도는 경로라 지연에 여유가 있다.
-    실패하면 예외를 그대로 올려 push_call_result가 재시도하게 둔다 —
-    placeholder를 Spring에 보내고 처리완료로 찍어버리면 그 통화의 진짜 점수는
-    영영 못 만든다.
-    """
-    if not ASSESS_URL:
-        return _placeholder_assessment("ASSESS_URL 미설정", measured_at)
-
-    resp = requests.post(
-        ASSESS_URL,
-        json={"call_log_entries": call_log_entries,
-              "logic_data": logic_data,
-              "emergencies": emergencies},
-        timeout=ASSESS_TIMEOUT,
-    )
-    resp.raise_for_status()
-    data = resp.json()
-    assessment = data["assessment"]
-    # serve/assess.py는 통화 시각을 모르니 measured_at을 항상 None으로 두고
-    # "worker.py가 채운다"고 위임한다 — 그 계약을 여기서 이행한다.
-    assessment["measured_at"] = measured_at
-    return assessment, data.get("adherence_records", [])
+    log.warning("compute_assessment: 채점 모델 미연동 — placeholder 값을 반환합니다")
+    assessment = {
+        "measured_at": None,
+        "depression_score": 0.5,
+        "emotional_stability": 0.5,
+        "health_risk": 0.5,
+        "cognitive_score": 0.5,
+        "overall_risk": 0.5,
+        "risk_level": "LOW",
+        "summary": "채점 모델 미연동 — placeholder 값입니다.",
+        "recommendation": "채점 모델 연동 후 재확인 필요.",
+    }
+    adherence_records: list = []
+    return assessment, adherence_records
 
 
 def load_call_result_processed() -> set[str]:
@@ -173,7 +147,6 @@ def pending_call_results() -> list[dict]:
 def push_call_result(entry: dict) -> None:
     assessment, adherence_records = compute_assessment(
         entry["call_log_entries"], entry["logic_data"], entry["emergencies"],
-        entry["call_log"]["ended_at"],
     )
     payload = {
         "recipient_id": entry["recipient_id"],
@@ -182,7 +155,6 @@ def push_call_result(entry: dict) -> None:
         "assessment": assessment,
         "adherence_records": adherence_records,
         "profile_updates": entry["profile_updates"],  # Spring 원본 스펙엔 없는 확장 필드 — 조율 필요
-        "incomplete_categories": entry.get("incomplete_categories", []),  # 이 필드 없는 예전 outbox 항목과 하위호환
     }
     resp = requests.post(
         f"{SPRING_BASE_URL}/internal/call-results",

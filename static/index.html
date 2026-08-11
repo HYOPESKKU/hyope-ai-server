@@ -322,6 +322,7 @@ function handleServerMessage(msg) {
       break;
     case "turn_done":
       currentAgentBubble = null;
+      currentElderBubble = null;
       break;
     case "call_ended":
       status("통화가 종료되었습니다.");

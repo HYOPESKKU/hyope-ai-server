@@ -97,7 +97,7 @@ ASSESS_URL = os.environ.get("ASSESS_URL", "").strip()
 ASSESS_TIMEOUT = float(os.environ.get("ASSESS_TIMEOUT", "20"))
 
 
-def _placeholder_assessment(reason: str, measured_at: str) -> tuple[dict, list]:
+def _placeholder_assessment(reason: str, measured_at: str) -> tuple[dict, list, list[str]]:
     """채점 서비스를 못 쓸 때. 진짜 값이 아님을 risk_level/summary에 박아둔다.
 
     measured_at은 None을 쓰지 않는다 — Spring Assessment.measuredAt이 non-null이라
@@ -111,10 +111,12 @@ def _placeholder_assessment(reason: str, measured_at: str) -> tuple[dict, list]:
         "cognitive_score": 0.5, "overall_risk": 0.5, "risk_level": "OBSERVE",
         "summary": f"채점 미연동({reason}) — placeholder 값입니다.",
         "recommendation": "채점 서비스 연동 후 재확인 필요.",
-    }, []
+    }, [], []
 
 
-def compute_assessment(call_log_entries: list, logic_data: dict, emergencies: list, measured_at: str) -> tuple[dict, list]:
+def compute_assessment(
+    call_log_entries: list, logic_data: dict, emergencies: list, measured_at: str,
+) -> tuple[dict, list, list[str]]:
     """채점 서비스(hyope-ai serve/)에 위임한다.
 
     ASSESS_URL이 없으면 예전처럼 placeholder를 반환한다. 채점 서비스 없이도
@@ -124,6 +126,9 @@ def compute_assessment(call_log_entries: list, logic_data: dict, emergencies: li
     실패하면 예외를 그대로 올려 push_call_result가 재시도하게 둔다 —
     placeholder를 Spring에 보내고 처리완료로 찍어버리면 그 통화의 진짜 점수는
     영영 못 만든다.
+
+    세 번째 반환값은 채점 쪽이 본 미수집 카테고리다. brain.py가 outbox에 남기는
+    것과 기준이 달라 push_call_result에서 합친다.
     """
     if not ASSESS_URL:
         return _placeholder_assessment("ASSESS_URL 미설정", measured_at)
@@ -141,7 +146,9 @@ def compute_assessment(call_log_entries: list, logic_data: dict, emergencies: li
     # serve/assess.py는 통화 시각을 모르니 measured_at을 항상 None으로 두고
     # "worker.py가 채운다"고 위임한다 — 그 계약을 여기서 이행한다.
     assessment["measured_at"] = measured_at
-    return assessment, data.get("adherence_records", [])
+    # 구버전 채점 서비스는 incomplete_categories를 안 준다 — 그 경우 빈 목록이라
+    # 합쳐도 brain.py 쪽 결과만 남는다(동작 그대로).
+    return assessment, data.get("adherence_records", []), data.get("incomplete_categories", [])
 
 
 def load_call_result_processed() -> set[str]:
@@ -171,10 +178,26 @@ def pending_call_results() -> list[dict]:
 
 
 def push_call_result(entry: dict) -> None:
-    assessment, adherence_records = compute_assessment(
+    assessment, adherence_records, assessed_incomplete = compute_assessment(
         entry["call_log_entries"], entry["logic_data"], entry["emergencies"],
         entry["call_log"]["ended_at"],
     )
+
+    # 미수집 카테고리는 두 곳에서 나오고 기준이 다르다. 둘 다 "이 항목은 값을
+    # 못 얻었다"는 같은 뜻이라 합집합으로 보낸다.
+    #
+    #   brain.py  : 질문을 아예 못 던진 카테고리(통화 조기 종료 등)
+    #   assess.py : 물어봤지만 척도 판정이 "알수없음"으로 나온 카테고리
+    #
+    # 후자는 completed_categories에는 들어가 있어 brain.py가 못 잡는다. 그런데
+    # 점수는 중간값으로 채워지므로 화면상 "보통"으로 보인다 — 못 물어본 것과
+    # 똑같이 표시해 줘야 보호자가 오해하지 않는다.
+    #
+    # 순서를 유지하려고 set 대신 dict.fromkeys를 쓴다(알림 문구에 그대로 들어감).
+    incomplete_categories = list(dict.fromkeys(
+        [*entry.get("incomplete_categories", []), *assessed_incomplete]
+    ))
+
     payload = {
         "recipient_id": entry["recipient_id"],
         "call_log": entry["call_log"],
@@ -182,7 +205,7 @@ def push_call_result(entry: dict) -> None:
         "assessment": assessment,
         "adherence_records": adherence_records,
         "profile_updates": entry["profile_updates"],  # Spring 원본 스펙엔 없는 확장 필드 — 조율 필요
-        "incomplete_categories": entry.get("incomplete_categories", []),  # 이 필드 없는 예전 outbox 항목과 하위호환
+        "incomplete_categories": incomplete_categories,
     }
     resp = requests.post(
         f"{SPRING_BASE_URL}/internal/call-results",

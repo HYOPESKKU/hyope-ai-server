@@ -45,6 +45,20 @@ def _judgment_risk(logic_data: dict, category: str) -> tuple[float, str | None]:
     return JUDGMENT_RISK.get(j, 5.0), j
 
 
+def _incomplete_categories(judgments: dict[str, str | None]) -> list[str]:
+    """척도 결과를 못 얻은 카테고리 이름을 모은다.
+
+    통화가 중간에 끊기거나 어르신이 문항에 답하지 않으면 그 카테고리는
+    "알수없음"으로 오거나 아예 빠진다. 둘 다 점수는 중간값(5.0)으로 채워지므로
+    숫자만 봐서는 "보통이었다"와 "못 물어봤다"가 구별되지 않는다. 어느 항목이
+    비었는지 보호자에게 알려주려고 따로 담는다.
+
+    백엔드가 이 목록으로 INCOMPLETE_ANALYSIS 알림을 만든다(AssessmentService).
+    한글 이름 그대로 알림 문구에 들어가므로 logic_data의 키를 그대로 쓴다.
+    """
+    return [name for name, j in judgments.items() if j is None or j == "알수없음"]
+
+
 def _label_ratios(predictions: list[dict]) -> dict[str, float]:
     """확신 있는 예측만 세어 라벨별 비율을 낸다."""
     conf = [p["emotion"] for p in predictions
@@ -72,8 +86,11 @@ def compute(
     logic_data: dict,
     emergencies: list,
     predictions: list[dict],
-) -> tuple[dict, list]:
-    """(assessment, adherence_records)를 반환한다.
+) -> tuple[dict, list, list[str]]:
+    """(assessment, adherence_records, incomplete_categories)를 반환한다.
+
+    incomplete_categories가 assessment 안이 아니라 밖으로 나오는 이유는 Spring의
+    AiCallResult DTO가 그 자리에서 읽기 때문이다(assessment 하위가 아니라 최상위).
 
     predictions는 call_log_entries와 같은 길이로, 각 answer의 분류 결과다.
     """
@@ -102,6 +119,8 @@ def compute(
 
     level = _risk_level(overall)
 
+    judgments = {"우울": dep_j, "불안": anx_j, "신체건강": hea_j, "인지기능": cog_j}
+
     return {
         "measured_at": None,          # worker.py가 채운다
         "depression_score": round(depression, 1),
@@ -120,7 +139,7 @@ def compute(
             "classified_utterances": len([p for p in predictions if p]),
             "emergency_count": len(emergencies),
         },
-    }, _adherence(logic_data)
+    }, _adherence(logic_data), _incomplete_categories(judgments)
 
 
 def _summary(logic_data: dict, ratios: dict, emergencies: list) -> str:

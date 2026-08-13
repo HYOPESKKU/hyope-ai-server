@@ -120,7 +120,13 @@ def assess(req: AssessRequest) -> dict:
         for (i, _), r in zip(valid, _state["predictor"].predict_batch([a for _, a in valid])):
             predictions[i] = r
 
-    assessment, adherence = assess_mod.compute(
+    assessment, adherence, incomplete = assess_mod.compute(
         req.call_log_entries, req.logic_data, req.emergencies, predictions
     )
-    return {"assessment": assessment, "adherence_records": adherence}
+    # 세 키 모두 Spring AiCallResult의 최상위 필드와 이름이 같다. worker.py가
+    # 그대로 얹어 보내면 되도록 여기서 형태를 맞춰 둔다.
+    return {
+        "assessment": assessment,
+        "adherence_records": adherence,
+        "incomplete_categories": incomplete,
+    }

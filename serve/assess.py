@@ -86,6 +86,7 @@ def compute(
     logic_data: dict,
     emergencies: list,
     predictions: list[dict],
+    item_judgments: dict | None = None,
 ) -> tuple[dict, list, list[str]]:
     """(assessment, adherence_records, incomplete_categories)를 반환한다.
 
@@ -93,6 +94,10 @@ def compute(
     AiCallResult DTO가 그 자리에서 읽기 때문이다(assessment 하위가 아니라 최상위).
 
     predictions는 call_log_entries와 같은 길이로, 각 answer의 분류 결과다.
+
+    item_judgments는 question_id -> {"judgment", "reason"} — logic_data와 달리
+    카테고리가 아니라 문항 단위라 "복약/식사" 카테고리의 medication/meal처럼
+    같은 카테고리 안 문항이 서로 덮어쓰지 않는다.
     """
     ratios = _label_ratios(predictions)
 
@@ -139,7 +144,7 @@ def compute(
             "classified_utterances": len([p for p in predictions if p]),
             "emergency_count": len(emergencies),
         },
-    }, _adherence(logic_data), _incomplete_categories(judgments)
+    }, _adherence(item_judgments or {}), _incomplete_categories(judgments)
 
 
 def _summary(logic_data: dict, ratios: dict, emergencies: list) -> str:
@@ -171,12 +176,31 @@ def _recommendation(level: str, logic_data: dict, emergencies: list) -> str:
     return "특이사항 없이 안정적입니다."
 
 
-def _adherence(logic_data: dict) -> list:
+
+# questions.json의 daily_check 카테고리 문항 id -> Spring AdherenceType
+ADHERENCE_QUESTIONS = {"medication": "MEDICATION", "meal": "MEAL"}
+
+
+def _adherence(item_judgments: dict) -> list:
     """복약·식사 이행 기록.
 
-    현재 questions.json의 medication/meal 문항은 예/아니오를 구조화해 남기지
-    않고 카테고리 판정만 기록한다. 이행 여부를 정확히 뽑으려면 brain.py가
-    문항별 답을 따로 저장해야 해서, 여기서는 빈 목록을 반환한다.
-    ⚠ 미구현이며 팀 협의가 필요한 부분이다.
+    hyope-call-agent의 log_answer_analysis가 문항(question_id)별로 남긴 판정을
+    그대로 옮긴다. "양호"만 이행(done)으로 본다 — "우려"/"위급"은 안 했다는
+    뜻이고, "알수없음"이거나 애초에 못 물어본 문항은 판단 근거가 없으므로
+    레코드를 아예 내지 않는다(모른다를 "안 했다"로 단정하면 안 된다).
+
+    slot은 Spring이 하루 한 통화 기준으로 항상 BREAKFAST로 고정해서 저장하므로
+    (CallResultService) 실질적으로 무시되지만, DTO 필수값이라 채워서 보낸다.
     """
-    return []
+    records = []
+    for question_id, adherence_type in ADHERENCE_QUESTIONS.items():
+        judgment = (item_judgments.get(question_id) or {}).get("judgment")
+        if judgment is None or judgment == "알수없음":
+            continue
+        records.append({
+            "adherence_type": adherence_type,
+            "slot": "BREAKFAST",
+            "is_needed": True,
+            "is_done": judgment == "양호",
+        })
+    return records

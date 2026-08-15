@@ -67,6 +67,7 @@ class AssessRequest(BaseModel):
     call_log_entries: list[dict] = Field(default_factory=list)
     logic_data: dict = Field(default_factory=dict)
     emergencies: list = Field(default_factory=list)
+    item_judgments: dict = Field(default_factory=dict)
 
 
 @app.get("/health")
@@ -121,7 +122,8 @@ def assess(req: AssessRequest) -> dict:
             predictions[i] = r
 
     assessment, adherence, incomplete = assess_mod.compute(
-        req.call_log_entries, req.logic_data, req.emergencies, predictions
+        req.call_log_entries, req.logic_data, req.emergencies, predictions,
+        req.item_judgments,
     )
     # 세 키 모두 Spring AiCallResult의 최상위 필드와 이름이 같다. worker.py가
     # 그대로 얹어 보내면 되도록 여기서 형태를 맞춰 둔다.

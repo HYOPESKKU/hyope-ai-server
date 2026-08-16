@@ -8,8 +8,10 @@ hyope-call-agent의 loader/worker.py에 있는 compute_assessment() 스텁을 �
 
   1) 척도 판정 (logic_data) — 주 신호
      에이전트가 GDS-5 / GAD-2 / FRAIL·낙상 / SIS 문항을 물어보고 카테고리별로
-     양호·우려·알수없음·위급 중 하나를 기록한 것. 검증된 임상 척도 기반이라
-     이쪽이 주가 된다.
+     문제없음·문제있음·부적절 중 하나를 기록한 것. 검증된 임상 척도 기반이라
+     이쪽이 주가 된다. logic_data의 키는 questions.json/agent.stages.StageType의
+     영문 카테고리 값(depression/anxiety/health/cognitive 등)이다 — 보호자에게
+     보여줄 이름은 이 파일 안에서 한글로 따로 매핑한다(CATEGORY_LABEL_KR).
 
   2) 감정 분류기 — 보조 신호
      척도 문항 **바깥**에서 어르신이 흘린 자유 발화를 본다. 예를 들어
@@ -23,11 +25,19 @@ hyope-call-agent의 loader/worker.py에 있는 compute_assessment() 스텁을 �
 
 from collections import Counter
 
-# questions.json의 카테고리 → 분류기 라벨
-CATEGORY_TO_LABEL = {"우울": "우울", "불안": "불안", "신체건강": "신체불편"}
+# logic_data/item_judgments 키(agent.stages.StageType 값, 영문) → 보호자에게 보여줄 한글 이름.
+# INCOMPLETE_ANALYSIS 알림·summary 문구에 그대로 들어가므로 통화 에이전트 쪽
+# agent/tools.py의 _STAGE_LABEL과 이름을 맞춘다.
+CATEGORY_LABEL_KR = {
+    "event": "최근 근황", "interest": "취미", "anxiety": "불안", "depression": "우울",
+    "health": "건강", "medication": "복약", "meal": "식사", "emergency": "응급",
+    "cognitive": "인지기능", "closing": "마무리",
+}
 
-# 판정 → 0~10 위험 점수. 척도 결과를 그대로 옮긴 값이다.
-JUDGMENT_RISK = {"양호": 1.0, "우려": 6.0, "위급": 9.5, "알수없음": 5.0}
+# 판정 → 0~10 위험 점수. 척도 결과를 그대로 옮긴 값이다. "위급"에 해당하는 별도 판정값은
+# 없다 — EMERGENCY는 discomfort_flags로 감지되어 emergencies 리스트에 별도로 쌓이고,
+# compute()가 그 리스트 유무로 최소 위험도를 직접 올린다(judgment 값과 무관).
+JUDGMENT_RISK = {"문제없음": 1.0, "문제있음": 6.0, "부적절": 5.0}
 
 # 분류기가 점수를 움직일 수 있는 최대 폭(0~10 중). 척도가 주이고 분류기는 보조라
 # 뒤집지 못하게 제한한다.
@@ -49,14 +59,14 @@ def _incomplete_categories(judgments: dict[str, str | None]) -> list[str]:
     """척도 결과를 못 얻은 카테고리 이름을 모은다.
 
     통화가 중간에 끊기거나 어르신이 문항에 답하지 않으면 그 카테고리는
-    "알수없음"으로 오거나 아예 빠진다. 둘 다 점수는 중간값(5.0)으로 채워지므로
-    숫자만 봐서는 "보통이었다"와 "못 물어봤다"가 구별되지 않는다. 어느 항목이
-    비었는지 보호자에게 알려주려고 따로 담는다.
+    "부적절"(동문서답 등 판단 불가)로 오거나 아예 빠진다. 둘 다 점수는
+    중간값(5.0)으로 채워지므로 숫자만 봐서는 "보통이었다"와 "못 물어봤다"가
+    구별되지 않는다. 어느 항목이 비었는지 보호자에게 알려주려고 따로 담는다.
 
     백엔드가 이 목록으로 INCOMPLETE_ANALYSIS 알림을 만든다(AssessmentService).
-    한글 이름 그대로 알림 문구에 들어가므로 logic_data의 키를 그대로 쓴다.
+    호출부(compute())가 judgments를 이미 한글 표시 이름으로 채워 넘긴다.
     """
-    return [name for name, j in judgments.items() if j is None or j == "알수없음"]
+    return [name for name, j in judgments.items() if j is None or j == "부적절"]
 
 
 def _label_ratios(predictions: list[dict]) -> dict[str, float]:
@@ -101,10 +111,10 @@ def compute(
     """
     ratios = _label_ratios(predictions)
 
-    dep_base, dep_j = _judgment_risk(logic_data, "우울")
-    anx_base, anx_j = _judgment_risk(logic_data, "불안")
-    hea_base, hea_j = _judgment_risk(logic_data, "신체건강")
-    cog_base, cog_j = _judgment_risk(logic_data, "인지기능")
+    dep_base, dep_j = _judgment_risk(logic_data, "depression")
+    anx_base, anx_j = _judgment_risk(logic_data, "anxiety")
+    hea_base, hea_j = _judgment_risk(logic_data, "health")
+    cog_base, cog_j = _judgment_risk(logic_data, "cognitive")
 
     depression = _blend(dep_base, ratios.get("우울", 0.0))
     health = _blend(hea_base, ratios.get("신체불편", 0.0))
@@ -152,9 +162,10 @@ def _summary(logic_data: dict, ratios: dict, emergencies: list) -> str:
     parts = []
     for cat, block in logic_data.items():
         j = (block or {}).get("judgment")
-        if j in ("우려", "위급"):
+        if j == "문제있음":
             reason = (block or {}).get("reason", "")
-            parts.append(f"{cat} {j}" + (f"({reason})" if reason else ""))
+            label = CATEGORY_LABEL_KR.get(cat, cat)
+            parts.append(f"{label} {j}" + (f"({reason})" if reason else ""))
     if emergencies:
         parts.append(f"위급 신호 {len(emergencies)}건")
     top = [k for k, v in sorted(ratios.items(), key=lambda x: -x[1])
@@ -177,17 +188,18 @@ def _recommendation(level: str, logic_data: dict, emergencies: list) -> str:
 
 
 
-# questions.json의 daily_check 카테고리 문항 id -> Spring AdherenceType
-ADHERENCE_QUESTIONS = {"medication": "MEDICATION", "meal": "MEAL"}
+# static/questions.json의 medication/meal 문항 id -> Spring AdherenceType
+ADHERENCE_QUESTIONS = {"medication_entry": "MEDICATION", "meal_entry": "MEAL"}
 
 
 def _adherence(item_judgments: dict) -> list:
     """복약·식사 이행 기록.
 
-    hyope-call-agent의 log_answer_analysis가 문항(question_id)별로 남긴 판정을
-    그대로 옮긴다. "양호"만 이행(done)으로 본다 — "우려"/"위급"은 안 했다는
-    뜻이고, "알수없음"이거나 애초에 못 물어본 문항은 판단 근거가 없으므로
-    레코드를 아예 내지 않는다(모른다를 "안 했다"로 단정하면 안 된다).
+    agent.tools.check_in이 문항(question_id)별로 남긴 판정을 그대로 옮긴다.
+    "문제없음"(예: "약 챙겨 드셨나요?"에 "네")만 이행(done)으로 본다 —
+    "문제있음"(안 드셨다는 뜻)은 안 했다는 뜻이고, "부적절"(동문서답 등)이거나
+    애초에 못 물어본 문항은 판단 근거가 없으므로 레코드를 아예 내지 않는다
+    (모른다를 "안 했다"로 단정하면 안 된다).
 
     slot은 Spring이 하루 한 통화 기준으로 항상 BREAKFAST로 고정해서 저장하므로
     (CallResultService) 실질적으로 무시되지만, DTO 필수값이라 채워서 보낸다.
@@ -195,12 +207,12 @@ def _adherence(item_judgments: dict) -> list:
     records = []
     for question_id, adherence_type in ADHERENCE_QUESTIONS.items():
         judgment = (item_judgments.get(question_id) or {}).get("judgment")
-        if judgment is None or judgment == "알수없음":
+        if judgment is None or judgment == "부적절":
             continue
         records.append({
             "adherence_type": adherence_type,
             "slot": "BREAKFAST",
             "is_needed": True,
-            "is_done": judgment == "양호",
+            "is_done": judgment == "문제없음",
         })
     return records

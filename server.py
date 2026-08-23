@@ -218,10 +218,6 @@ def public_base_url() -> str:
 
     return require_env("PUBLIC_BASE_URL").rstrip("/")
 
-# ? POST /call에서 발신 시 채워두고, /ws/call-stream의 start 이벤트(callId)로 꺼내
-# state["_metadata"]에 심는다. HTTP 요청(/call)과 WS 접속(claw-ops가 나중에 별도로
-# 걸어옴)이 서로 다른 요청이라 callId로 이어줄 방법이 이거 말고 없다 — 단일 프로세스
-# 배포를 전제로 한 인메모리 저장(다른 상태 저장과 동일한 방식).
 PENDING_CALL_METADATA: dict[str, dict] = {}
 
 # --------------------------------------------------------------------------
@@ -680,7 +676,9 @@ async def browser_ws(client_ws: WebSocket) -> None:
 
 @app.websocket("/ws/call-stream")
 async def call_stream_ws(client_ws: WebSocket) -> None:
-    # * claw-ops VoiceML의 <Connect><Stream>이 붙는 곳 — /ws/browser와 같은 구조에 CallSink/_pump_downstream_call만 다름.
+    # * 우리 서버에서 Stream으로 연결하라는 XML 응답을 보낸 후 claw-ops 쪽에서 클라이언트로 접속.
+    # * 통화 내내 열려있는 양방향 스트리밍.
+    # * /ws/browser와 같은 구조에 CallSink/_pump_downstream_call만 다름.
     
     await client_ws.accept()
     session_id = f"phone call-{uuid.uuid4().hex[:8]}"
@@ -790,9 +788,8 @@ async def call_stream_ws(client_ws: WebSocket) -> None:
 
 
 async def _place_call(recipient_id, phone_number: str, profile: dict, model: str | None) -> None:
-    # * 실제 전화 발신 — POST /call 응답과 분리하려 BackgroundTasks로 실행, 실패 시 CALL_RESULT_OUTBOX에 FAILED로 남긴다.
-    # * profile.address는 여기서 미리 안 쓰고 그대로 PENDING_CALL_METADATA에 실어 보낸다 —
-    # * 지오코딩은 실제로 check_external_api_necessity가 필요로 하는 순간에만 한다(integrations/dispatch.py의 dispatch_tool).
+    # * 실패 시 CALL_RESULT_OUTBOX에 FAILED.
+    # * profile.address는 여기서 미리 안 쓰고 그대로 PENDING_CALL_METADATA에 실어 보낸다
 
     base = public_base_url()
     try:
@@ -826,9 +823,6 @@ async def create_call(
 ) -> dict:
     # * 메인 서버에서 부르는 통화 트리거. body: {recipient_id, phone_number, profile?, model?}
     # * 블로킹 대기 중인 Spring에 즉시 accepted를 반환하고 실제 발신은 백그라운드로.
-    # * body에 model이 없으면(Spring이 굳이 안 골라줬으면) .env의 DEFAULT_CALL_MODEL로 감 —
-    # * 지금은 이게 실제 통화의 기본 모델이 Gemini Live가 되게 하는 유일한 지점이다. xAI로 걸고
-    # * 싶으면 Spring이 body.model에 xAI 모델명(예: grok-voice-latest)을 명시하면 됨.
 
     check_internal_key(x_api_key)
     body = await request.json()
@@ -843,10 +837,9 @@ async def create_call(
     )
     return {"status": "accepted"}
 
-
 @app.post("/voiceml/answer")
 async def voiceml_answer(request: Request, x_signature: str | None = Header(default=None)) -> Response:
-    # * claw-ops가 전화 연결 시 때리는 VoiceML 웹훅 — Stream으로 연결하라고 XML로 답한다.
+    # * 전화 연결 시 때리는 VoiceML 웹훅 — Stream으로 연결하라고 XML로 답한다.
     
     form = dict(await request.form())
     base = public_base_url()

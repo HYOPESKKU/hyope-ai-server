@@ -222,7 +222,7 @@ async def _pump_upstream(upstream, sink: OutputSink, state: dict, session_id: st
 
             tool_call = event.get("toolCall")
             if tool_call:
-                if timing["voice_in"] is not None:
+                if timing["voice_in"] is not None: # 지연시간 계산
                     names = ", ".join(fc["name"] for fc in tool_call["functionCalls"])
                     log.info(
                         "[%s] 음성 들어감 -> 툴 선정(%s): %.0f ms",
@@ -234,12 +234,12 @@ async def _pump_upstream(upstream, sink: OutputSink, state: dict, session_id: st
                 # * 질문 물어봐라")을 그대로 돌려주면 작별 인사와 다음 질문 안내가 한 응답 안에서
                 # * 뒤섞여 뭉개진 문장이 나온다(실제 사례). 상태 반영(logic_data 등)은 그대로 하되,
                 # * 그 결과의 next_step만 "무시하라"는 안내로 바꿔치기한다.
-                calls = tool_call["functionCalls"]
+                calls = tool_call["functionCalls"] # end_call 절차 진행
                 ending_this_batch = any(fc["name"] == "end_call" for fc in calls)
                 function_responses = []
                 for fc in calls:
                     name = fc["name"]
-                    result = await dispatch.dispatch_tool(state, name, fc.get("args") or {})
+                    result = await dispatch.dispatch_tool(state, name, fc.get("args") or {}) # * 실제 툴 호출
                     parsed = json.loads(result)
                     if ending_this_batch and name != "end_call" and "next_step" in parsed:
                         parsed["next_step"] = (
@@ -253,7 +253,7 @@ async def _pump_upstream(upstream, sink: OutputSink, state: dict, session_id: st
                     await sink.send_event({"type": "tool_used", "name": name})
                     if name == "end_call":
                         ending = True
-                await upstream.send(json.dumps({
+                await upstream.send(json.dumps({ # * 실행 결과 다시 전송
                     "toolResponse": {"functionResponses": function_responses},
                 }))
                 # 이 응답 이후 다음 오디오/텍스트 델타가 오면 그게 "답변 생성 시작"이다.
@@ -297,7 +297,6 @@ async def _open_session(model: str):
 
 
 async def run_session(client_ws: WebSocket, state: dict, model: str, session_id: str) -> bool:
-    # * call_stream_ws가 xAI 대신 이걸 호출한다(model이 MODEL_PREFIX로 시작할 때만).
     # * 반환값은 call_stream_ws가 call_result 상태(COMPLETED/FAILED)에 그대로 반영한다.
 
     async with _open_session(model) as upstream:

@@ -49,23 +49,8 @@ LEVEL_ORDER: dict[StageLevel, int] = {
 
 # 스테이지 초기 우선순위값 — pick_next_stage()가 같은 레벨(TRY) 내에서 값이 큰 쪽을 먼저 고른다.
 # 6개 baseline 전부 서로 다른 값을 줘서 매 통화 항상 근황 -> 취미 -> 건강 -> 기분 -> 식사 -> 복약
-# 순으로 고정되게 한다(동률이 없으니 pick_next_stage()의 random.choice(top) tie-break까지 안 감).
-# -1은 별도로 "이미 완료" 표시로만 쓰인다(여기 값과 안 겹치게 0부터 시작).
-# COGNITIVE/ANXIETY/CLOSING은 여기 안 실려있고 별도로 비활성(completed/-1) 초기화된다
-# (CallStageBuffer 참고) — 이 셋은 discomfort_flags로 반응형 스폰될 때만 활성화되고, CLOSING은
-# pick_next_stage()가 다른 후보를 하나도 못 찾았을 때만 마지막 수단으로 재활성화된다.
-#
-# HEALTH는 baseline으로 유지하되(건강 확인 자체는 매 통화 필수 질문), 심각도가 escalate됐을 때
-# 뽑히던 프레일티 지수/낙상 위험 척도 배터리(계단 오르기, 지난 4주간 피로도, 11개 질환 여부,
-# 체중감소, 낙상 이력 등 — static/questions.json의 frail_*/fall_* 문항)는 대화 맥락과 무관하게
-# 기계적으로 나온다는 피드백으로 questions.json에서 enabled:false 처리했다 — health_entry/sleep/
-# pain/health_self_rating과 low tier는 그대로 남아있어 자연스러운 확인 질문은 계속된다.
-#
-# DEPRESSION/HEALTH는 baseline이지만, 매 통화 4개(우울/불안/건강/인지) 다 물어보면 피로도가 크다고
-# 판단해서 이 둘의 entry 질문(questions.json의 is_entry:true)을 넓게 설계해 인지/불안 신호까지
-# 겸해서 받는다 — "어제 하루 어떻게 보내셨어요"는 우울+인지, "몸/마음/잠은 어떠세요"는 건강+불안을
-# 같이 겨냥한다. 거기서 뭔가 걸리면 discomfort_flags로 인지/불안이 반응형 스폰되거나, 같은 카테고리
-# 안에서 severity가 low로 내려가 더 깊이 물어본다(check_in의 3.6단계 참고).
+# 순으로 고정되게 한다. 
+
 INITIAL_PRIORITY: dict[StageType, int] = {
     StageType.EVENT: 5,       # 1. 근황
     StageType.INTEREST: 4,    # 2. 취미
@@ -152,10 +137,6 @@ def _load_question_bank() -> dict[StageType, list[QuestionCandidate]]:
     # * 그 구분을 없앴다 — 옛 entry였던 문항도 그냥 priority=0(기본값, JSON에 안 적으면 자동으로 0)으로
     # * 두면 다른 문항(priority>=1)보다 항상 먼저 뽑히므로, 특별 취급 코드 없이 우선순위 하나로 통일된다.
 
-    # * "enabled": false는 QuestionCandidate 필드가 아니라 로더 전용 스위치다 — JSON엔 진짜 주석이
-    # * 없어서, 테스트 중 특정 문항을 무작위 풀에서 빼고 싶을 때(예: sis_day/month/year를 잠시 끄고
-    # * sis_encode->sis_recall 흐름만 확인) 항목을 지우지 않고 이 키만 false로 둔다 — true로 되돌리면
-    # * 바로 복원된다.
     raw: dict = json.loads((ROOT / "static" / "questions.json").read_text())
     bank: dict[StageType, list[QuestionCandidate]] = {}
     for stage_value, items in raw.items():
@@ -333,8 +314,6 @@ class CallStageBuffer:
 
 def pick_next_stage(buffer: CallStageBuffer) -> StageType | None:
     # * agent/tools.py의 _advance()(check_in이 부트스트랩/일반 호출 모두에서 공유)가 호출하는 선택 로직.
-    # * _advance()는 buffer.pending_gap이 있으면 이 함수를 아예 안 부르고 _consume_pending_gap()으로
-    # * 먼저 처리한다 — depends_on 문항(sis_recall 등) 강제 주입은 여기서 다루지 않는다.
     # * 0) 호출될 때마다 턴 시계를 하나 진행시킨다(buffer.turn_count==0으로 부트스트랩 판별에 씀).
     # * 1) severity가 채워진 TRY 스테이지(아직 안 물어본 상태로 discomfort_flags에 의해 막 스폰됐거나,
     #      또는 baseline 대기 중 severity가 붙은 경우)가 하나라도 있으면, 다른 정렬 다 무시하고

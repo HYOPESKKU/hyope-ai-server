@@ -50,8 +50,8 @@ def _stage_label(stage: stages.StageType) -> str:
     return _STAGE_LABEL.get(stage, stage.value)
 
 
-# 3.7단계(도움처 제안)에서 "근처에 도움받을 수 있는 곳"을 뭉뚱그려 말하면, 한 통화 안에 건강/기분
-# 문제가 같이 나왔을 때 어르신이 어느 쪽 제안인지 헷갈려 거절할 수 있다(실제 사례) — 카테고리별로
+# "근처에 도움받을 수 있는 곳"을 뭉뚱그려 말하면, 한 통화 안에 건강/기분
+# 문제가 같이 나왔을 때 어르신이 어느 쪽 제안인지 헷갈려 거절할 수 있다 — 카테고리별로
 # 구체적인 장소 유형을 명시하게 한다.
 _RESOURCE_HINT: dict[stages.StageType, str] = {
     stages.StageType.HEALTH: "병원이나 보건소",
@@ -59,18 +59,6 @@ _RESOURCE_HINT: dict[stages.StageType, str] = {
     stages.StageType.ANXIETY: "상담센터나 정신건강복지센터",
     stages.StageType.COGNITIVE: "병원(신경과)이나 보건소",
 }
-
-
-# --------------------------------------------------------------------------
-# "일상" 통합 화제 전환 — 매 통화 필수인 baseline 6개(근황/취미/복약/식사/우울/건강)는 원래도
-# 전부 물어보게 되어있다(REACTIVE_ONLY_STAGES가 아니라서 건너뛸 수 없음). 문제는 이 6개 사이를
-# 넘어갈 때마다 _stage_label로 "우울"/"건강" 같은 구체적 라벨을 모델에게 그대로 던져줘서,
-# 모델이 그 임상적 카테고리명을 육성으로 말해버릴 위험이 있었다는 것 — 이 묶음 안에서는 화제
-# 전환을 "일상" 한 번으로만 하고(맨 처음 진입할 때 한 번), 그 뒤로 6개 사이를 오갈 때는 새로
-# 화제를 여는 것처럼 브릿지하지 않고 그냥 자연스럽게 이어서 묻는다 — 어차피 어르신 입장에선 계속
-# 같은 "일상 얘기" 흐름이다. 불안/인지기능처럼 반응형으로만 뜨는 카테고리는 이 대상이 아니다
-# (사용자가 명시적으로 이 6개만 지정함) — 그쪽은 기존처럼 구체적 라벨로 브릿지한다.
-# --------------------------------------------------------------------------
 
 DAILY_LIFE_STAGES: set[stages.StageType] = set(stages.INITIAL_PRIORITY.keys())
 
@@ -83,10 +71,7 @@ _ONE_QUESTION_GUARD = (
 
 
 def _question_goal(q: stages.QuestionCandidate) -> str:
-    # * improvise=True(entry — 검증된 척도가 아니라 그냥 자연스럽게 떠보려고 지은 지시문)면 text를
-    # * 그대로 읽을 대본이 아니라 모델이 따라야 할 지시로 주고, 지금까지 나눈 대화 흐름에 자연스럽게
-    # * 얹어 직접 질문을 지어내게 한다 — GDS-5/GAD-2/SIS 같은 본 문항(검증된 척도라 문구를 임의로
-    # * 바꾸면 안 됨)은 여전히 text를 그대로 참고해서 묻는다.
+    # * 인지 기능 체크를 위한 즉흥 문제에 따른 처리 다르게
     if q.improvise:
         return (
             f"다음 지시를 따르세요: \"{q.text}\" 지금까지 나눈 대화에 자연스럽게 이어 붙여, "
@@ -110,13 +95,7 @@ def _question_next_step(buffer: stages.CallStageBuffer, stage: stages.StageType,
 
 
 def _known_issue_note(state: dict, stage_state: stages.StageState) -> str:
-    # * discomfort_flags로 방금 스폰/재활성화된 스테이지(severity가 붙어있음)는, 다음에 실제로
-    # * 뽑히는 문항(특히 entry처럼 넓은 질문)이 그 스폰을 유발한 구체적 문제(예: 다리 통증)를 직접
-    # * 짚지 않을 수 있다 — 질문 후보 선택은 severity 필터보다 is_entry를 우선하기 때문이다
-    # * (agent/stages.py의 next_question() 참고). 그 결과 "다른 불편한 데는 없냐"류의 넓은 질문에
-    # * 어르신이 원래 문제를 그대로 재확인해줘도(예: "다리 아픈 거 말고는 괜찮아") 모델이 "다른
-    # * 문제 없음=문제없음"으로 오판하고 그 문제를 조용히 묻어버리는 사례가 실제로 있었다 — 그
-    # * 문제가 스폰 사유였다는 걸 next_step에 직접 박아 넣어서, 판정 시 반드시 그 기준으로 보게 한다.
+    # * 문제 감지 강화
     if stage_state.severity is None:
         return ""
     known_reason = (state["logic_data"].get(stage_state.stage.value) or {}).get("reason")
@@ -352,9 +331,7 @@ def _existing_profile_text(stage: stages.StageType, profile: dict) -> str:
 
 def _match_existing_hobby(profile: dict, reason: str) -> str | None:
     # * INTEREST 요약 라벨을 "취미"라는 일반 명사 대신 실제 취미 이름(예: "등산")으로 달기 위해,
-    # * profile의 기존 취미 목록 중 reason 문장에 실제로 언급된 것을 찾는다. 문항 자체가
-    # * "{name} 요즘도 하고 계세요?" 식으로 이름을 넣어 물으므로(agent/stages.py의
-    # * build_interest_questions), 모델이 판정 이유에 그 이름을 그대로 쓰는 경우가 많다.
+    # * profile의 기존 취미 목록 중 reason 문장에 실제로 언급된 것을 찾는다. 
     for hobby in profile.get("hobbies") or []:
         if hobby and hobby in reason:
             return hobby
@@ -363,16 +340,7 @@ def _match_existing_hobby(profile: dict, reason: str) -> str | None:
 
 def build_call_summary_text(logic_data: dict, buffer: stages.CallStageBuffer, profile: dict) -> str:
     # * agent/brain.py의 write_call_result_outbox가 backfill_implicit_screening 이후에 호출해,
-    # * 통화 종료 시 보호자에게 보낼 SMS 본문(카테고리별 한 줄 요약)을 만든다. 통화가 도중에
-    # * 끊겨 logic_data에 항목이 없는 카테고리는 건너뛴다(무리하게 "미확인"을 채워넣지 않음).
-    # * EVENT는 "기존 - .../ 신규 - ..." 두 항목 대조. INTEREST는 기존 취미 이름을 찾을 수 있으면
-    # * "{취미명}(기존 - {취미명}, 신규 - 지속/중단[, 사유 - ...])" 형태로 — 취미는 "문제 있는지"가
-    # * 아니라 "계속 하고 계신지"가 핵심이라 상태(지속/중단)를 먼저 보여주고, 중단인 경우에만 사유를
-    # * 덧붙인다. 매칭되는 기존 취미가 없으면(완전히 새 취미) EVENT와 같은 두 항목 대조로 대체한다.
-    # * 나머지(문제 스크리닝 카테고리)는 "문제없음"이면 "상태 양호"로, 그 외("문제있음"/"부적절")는
-    # * 그 카테고리에 남아있는 symptom_tag(discomfort_flags의 keyword)를 한국어로 붙여 "OO 호소"
-    # * 형태로 만든다 — keyword가 없으면(discomfort_flags 없이 baseline 문항에서 직접 확인된 경우)
-    # * reason 텍스트만 쓴다.
+    # * 통화 종료 시 보호자에게 보낼 SMS 본문(카테고리별 한 줄 요약)을 만든다. 
     lines = []
     for stage in _SUMMARY_STAGE_ORDER:
         entry = logic_data.get(stage.value)
@@ -411,9 +379,8 @@ def build_call_summary_text(logic_data: dict, buffer: stages.CallStageBuffer, pr
 
 def build_call_summary_highlights(logic_data: dict) -> str:
     # * ClawOps SMS 발송은 본문이 200바이트를 넘으면 그대로 거부한다(clawops.BadRequestError) —
-    # * build_call_summary_text()의 풀 버전(기존/신규 대조, OO 호소 등)은 한글이 많아 카테고리
-    # * 2~3개만 있어도 200바이트를 훌쩍 넘는다(실제 통화에서 발견된 실패 사례). 그래서 실제
-    # * SMS 본문에는 이 압축판(문제있음류 카테고리 라벨만 나열)을 쓰고, 상세 내용은
+    # * 그래서 실제 SMS 본문에는 이 압축판(문제있음류 카테고리 라벨만 나열)을 쓰고,
+    # * 상세 내용은
     # * runtime/call_summaries/*.txt 디버그 파일에만 build_call_summary_text()로 남긴다.
     # * EVENT는 스크리닝 카테고리가 아니라(그냥 근황 수집용) judgment와 무관하게 항상 제외한다.
     labels = []
@@ -531,9 +498,7 @@ def _complete_stage_and_advance(
 
 
 def _advance(state: dict, buffer: stages.CallStageBuffer) -> dict:
-    # * 다음으로 물어볼 스테이지/질문을 고른다 — 기존 check_stage_status 본문과 동일한 분기.
-    # * pending_gap이 있으면 depends_on 문항(sis_recall 등)을 강제로 채워야 하니 pick_next_stage()의
-    # * 무작위 선택을 아예 건너뛴다 — 다른 스테이지도 이 간격 동안은 끼어들지 못한다.
+    # * 다음으로 물어볼 스테이지/질문을 고른다 
     if buffer.pending_gap is not None:
         return _consume_pending_gap(buffer)
     next_stage = stages.pick_next_stage(buffer)
@@ -550,12 +515,8 @@ def _advance(state: dict, buffer: stages.CallStageBuffer) -> dict:
     if stage_state.level == stages.StageLevel.TRY:
         if stage_state.pending_probe:
             # * discomfort_flags로 방금 이 스테이지가 뜬 이유(신고된 증상)를 척도 문항으로 바로
-            # * 건너뛰지 않고, 자연어로 한 번 더 캐묻는다 — 임상 척도 문항(GAD-2/GDS-5/frailty 등)은
-            # * 문구를 임의로 바꿀 수 없어서 특정 증상에 맞춰 고칠 수 없기 때문에, 척도 문항 앞에
-            # * 자유 발화 확인 턴을 하나 끼워넣는 방식으로 대신한다. 이 턴은 실제 QuestionCandidate가
-            # * 아니므로 mark_asked를 부르지 않는다 — 그 답변에 대한 채점(_apply_assessment,
-            # * high_severity_asks 카운트)도 건너뛰어야 한다(agent/tools.py의 check_in
-            # * awaiting_probe_answer 게이트 참고).
+            # * 건너뛰지 않고, 자연어로 한 번 더 캐묻는다 — 임상 척도 문항
+            # * 문구를 임의로 바꿀 수 없어서 척도 문항 앞에 자유 발화 확인 턴을 하나 끼워넣는 방식으로 대신한다. 
             probe_signal = stage_state.pending_probe
             stage_state.pending_probe = None
             stage_state.awaiting_probe_answer = True
@@ -635,13 +596,7 @@ def _apply_assessment(buffer: stages.CallStageBuffer, stage_state: stages.StageS
 
     if assessment == "문제있음":
         # * 카테고리가 severity="medium"/"high"로 확인 중이면, 관련 질문은 최소/최대 2개로 캡을
-        # * 건다 — 2개까지 물어봤는데도 계속 "문제있음"이면 그게 확인의 최대 한도이므로 더 캐묻지
-        # * 않고 그대로 완료 처리해서 다음 스테이지로 넘어간다("문제없음"이 오면 그 전에 이미 else
-        # * 분기에서 즉시 완료되므로 여기까지 안 온다). FIXED_SEQUENCE_STAGES(COGNITIVE)는
-        # * severity="high"(진짜 SIS 배터리)일 때만 캡 없이 전체 소진까지 진행한다 —
-        # * discomfort_flags로 severity="low"/"medium"만 받고 반응형으로 스폰된 경우(예: 애매한
-        # * 발언 하나로 인지기능이 의심된 경우)까지 SIS 배터리 전체를 강제로 다 물어보면 안 된다
-        # * (캡 없이 5~6개까지 캐물은 실제 사례로 발견된 버그).
+        # * 건다
         capped_tier = (
             stage_state.severity in ("medium", "high")
             and not (
@@ -665,14 +620,6 @@ def _apply_assessment(buffer: stages.CallStageBuffer, stage_state: stages.StageS
         completed = False
 
     else:  # 문제없음
-        # COGNITIVE(SIS) 같은 고정 배터리 스테이지는 진짜 SIS 검사 중(severity="high")일 때만 문항
-        # 하나가 문제없어도 나머지 문항(sis_recall/day/month/year 등)을 건너뛰지 않는다 — 은행이
-        # 실제로 소진되고(depends_on 문항 제외) 강제 대기 중인 PendingGap도 없을 때만 완료 처리하고,
-        # 그 전엔 문제있음과 똑같이 validate로 계속 진행시킨다. severity="low"/"medium"인 반응형
-        # 스폰(가벼운 의심만으로 뜬 경우)까지 이 "전체 소진" 규칙을 적용하면 안 된다 — 위 capped_tier와
-        # 대칭. pending_gap 체크가 없으면, sis_encode가 다른 고티어 문항들보다 늦게 뽑혀 마지막으로
-        # 채점되는 경우 next_question()이 이미 None(sis_recall은 후보 풀에 안 들어가므로)이라 아직
-        # sis_recall을 강제 주입하기도 전에 COGNITIVE가 COMPLETED로 잘못 넘어가 버린다.
         still_has_items = (
             stage_state.stage in stages.FIXED_SEQUENCE_STAGES
             and stage_state.severity == "high"
@@ -701,11 +648,7 @@ def _apply_assessment(buffer: stages.CallStageBuffer, stage_state: stages.StageS
 def _category_had_confirmed_problem(state: dict, stage_state: stages.StageState) -> bool:
     # * 이 카테고리에서 지금까지 실제로 물어본 문항 중 "문제있음"으로 판정된 게 하나라도 있는지
     # * item_judgments(문항 단위 기록, 카테고리 단위 logic_data와 달리 안 덮어씀)로 확인한다.
-    # * check_in의 logic_data 기록부가 이걸로 "이미 확인된 문제를 마지막 턴 하나가 문제없음으로
-    # * 되돌려서 지워버리는" 걸 막는 데 쓴다(실제 통화 사례: 우울 카테고리가 2개 문항에서 "문제있음"
-    # * 이었는데 극성이 헷갈리는 마지막 문항(GDS "집에 있는 게 좋은가요?")을 모델이 잘못 판정해서
-    # * 카테고리 전체가 "문제없음"으로 기록됨 — 사람이 보는 요약/실제 채점 데이터에서 그 우울 신호가
-    # * 통째로 사라지는 문제가 있었음).
+    # * 모델 판단과 무관하게 사람이 보는 요약/실제 채점 데이터에서 그 우울 신호 최대 보존
     item_judgments = state.get("item_judgments") or {}
     asked_ids = {q.id for q in stage_state.questions if q.asked}
     return any(
@@ -721,12 +664,6 @@ def _spawn_discomfort_flags(
     # * discomfort_flags 배열을 순회하며 각 신호를 해당 스테이지에 스폰한다 — assessment 값과 무관하게
     # * 항상 평가. signal/severity가 진짜인지는 모델의 판단을 그대로 신뢰한다 — 서버는 별도로
     # * 재검증하지 않는다.
-    # * logic_data는 여기서 바로 채운다 — 예전엔 스폰된 스테이지를 재평가(reassess)하는 왕복 호출로
-    # * 채웠지만, 지금은 그 왕복이 없으므로(TRY로 흡수, agent/stages.py의 StageLevel 참고) 신호 자체를
-    # * 그 스테이지의 판정으로 기록한다.
-    # * assessed_stage: 이번 check_in 호출의 assessment가 실제로 적용될 스테이지(모델이 자칭한 stage가
-    # * buffer.active_stage와 실제로 일치할 때만 채워짐, 그 외엔 None) — 아래 self-reference 판단에
-    # * stage_state.stage(서버가 실제로 추적 중인 현재 스테이지)가 아니라 반드시 이걸 써야 한다.
     for flag in discomfort_flags or []:
         signal = flag.get("signal")
         category = flag.get("category")
@@ -736,20 +673,6 @@ def _spawn_discomfort_flags(
             continue
 
         if assessed_stage is not None and category == assessed_stage.value:
-            # * 자기 카테고리를 가리키는 self-reference(예: 지금 health를 판정 중인데
-            # * discomfort_flags에도 category="health"가 실려옴) — 이 턴의 판정은 이미
-            # * _apply_assessment가 정식으로 처리하므로 스폰(level/severity/probe 등)은 필요
-            # * 없다. 다만 모델이 같이 보낸 keyword까지 통째로 버리면 안 된다 — 실제 통화에서
-            # * category가 자기 자신인 discomfort_flags가 흔하게 나오는데(예: depression
-            # * 판정 중 keyword="fatigue"), 이걸 그냥 버리면 서버가 알아낸 구체적 증상 태그가
-            # * 사라져서 다음 태그매칭 문항 선택에 못 쓴다.
-            # * assessed_stage가 None이면(모델이 자칭한 stage가 무효/불일치라 이 턴의 assessment가
-            # * 결국 아무 데도 반영 안 될 예정) 아래 일반 스폰 경로로 흘려보낸다 — category가 서버의
-            # * 실제 현재 스테이지와 우연히 같아도 "이 턴이 알아서 처리해줄 것"이라고 오판하면 안
-            # * 된다(실제 사례: stage="interest"로 잘못 부르면서 category="health"인 flag를 같이
-            # * 보냈는데, 서버는 이미 health로 넘어간 뒤라 category가 우연히 일치 — 예전 코드는 이걸
-            # * self-reference로 오인해 스폰을 건너뛰었고, 정작 stage 불일치로 이 턴 전체가
-            # * invalid_stage로 튕겨나가 "다리 아프다" 신호가 흔적도 없이 사라졌다).
             if keyword:
                 stage_state.symptom_tag = keyword
             continue
@@ -764,12 +687,7 @@ def _spawn_discomfort_flags(
         target_state.high_severity_asks = 0
         target_state.symptom_tag = keyword
         target_state.pending_probe = signal
-        # probe가 이 스테이지의 "진입"을 대신한다 — 이후 next_question()이 넓은 is_entry 문항을
-        # entry-priority로 또 먼저 뽑아버리면(agent/stages.py의 next_question() 참고), 방금 probe로
-        # 구체적으로 캐물은 증상 얘기 직후에 다시 "전반적으로 컨디션이 어떠세요" 같은 포괄적 질문이
-        # 이어져 대화가 겉돈다. 그래서 이 스테이지의 is_entry 문항(들)은 여기서 미리 소진 처리해
-        # next_question()이 severity/태그로 좁힌 관련 척도 문항으로 바로 넘어가게 한다 — mark_asked()가
-        # entry 형제 변형을 전부 같이 소진시키는 것과 동일한 패턴.
+
         for q in target_state.questions:
             if q.is_entry:
                 q.asked = True
@@ -787,18 +705,6 @@ def check_in(
 ) -> str:
     buffer: stages.CallStageBuffer = state["_stage_buffer"]
 
-    # 0) 부트스트랩 — 아직 스테이지가 하나도 안 뽑힌 시점(인사말에 대한 첫 답)이라 "판정"할 stage는
-    # 없지만, discomfort_flags는 처리해야 한다 — 안 그러면 어르신이 인사에 대한 답으로 처음부터
-    # "너무 우울했다"처럼 실제 우려 신호를 말해도 그냥 통째로 버려진다(실제 발견된 버그). active_stage가
-    # 아직 임의 기본값(EVENT)이라 그 카테고리 자체를 자기 자신으로 착각해 걸러내는 예외 케이스가
-    # 있을 수 있지만, 그 정도는 감수한다 — 나머지 카테고리는 정상적으로 스폰되어 첫 스테이지
-    # 선택(_advance)에 곧바로 반영된다.
-    #
-    # discomfort_flags 대신 그냥 stage/assessment로 곧장 증상을 보고하는 경우도 있다(실제 사례:
-    # 첫 답변에서 discomfort_flags 없이 stage="health"+assessment="문제있음"으로 허리/머리 통증을
-    # 보고했는데 이 분기가 stage/assessment를 아예 안 보고 버려서 신호가 통째로 사라짐 — "첫
-    # 호출엔 stage 생략" 지시를 모델이 안 지켜도 신호 자체를 놓치면 안 된다). 유효한 stage +
-    # "문제있음"이면 discomfort_flags 하나를 합성해서 같은 스폰 로직을 그대로 태운다.
     if buffer.turn_count == 0:
         synthesized_flags = list(discomfort_flags or [])
         if assessment == "문제있음":
@@ -812,19 +718,9 @@ def check_in(
                     "category": reported_stage.value,
                     "severity": "low",
                 })
-        # * 부트스트랩은 어떤 카테고리의 assessment도 실제로 적용하지 않으므로(그냥 다음 질문으로
-        # * 바로 넘어감) assessed_stage=None — self-reference 오판 여지 자체를 원천 차단한다.
         _spawn_discomfort_flags(state, buffer, buffer.current(), synthesized_flags, None)
         result = _advance(state, buffer)
         if "next_step" in result:
-            # * 모델이 "첫 호출엔 stage 생략" 지시를 안 지키고 자기 나름대로 stage/assessment를
-            # * 채워 보내는 경우가 있다(실제 사례: 인사 답변만 듣고 stage="event"+assessment="문제없음"을
-            # * 자기가 판정했다고 여김) — 그 판정 자체는 위에서 이미 무시했지만(discomfort 합성 용도
-            # * 외엔 안 씀), next_step에 아무 안내가 없으면 모델이 "내가 방금 확인한 그 얘기"를
-            # * 자연스럽게 이어받아 자체 질문을 하나 더 끼워 넣고(실제 사례: "혹시 최근에 기분 좋은
-            # * 일이나 특별한 근황 있으셨을까요?") 그 뒤에야 서버가 지정한 진짜 질문을 붙여서, 결과적으로
-            # * 한 턴에 질문이 두 개 나가버렸다. 여기서 그 판정은 무효라는 걸 못박고 아래 지정된 질문
-            # * 하나만 하라고 명시한다.
             result["next_step"] = (
                 "이건 통화의 첫 실제 질문입니다 — 지금까지는 인사만 나눴을 뿐, 어떤 스테이지 질문도 "
                 "아직 시작되지 않았습니다. 방금 당신이 함께 보낸 판정(stage/assessment)이 있었더라도 "
@@ -840,31 +736,11 @@ def check_in(
     except ValueError:
         stage_type = None
     assessed_stage = stage_type if stage_type == buffer.active_stage else None
-
-    # 2) discomfort_flags는 지금 판정 중인 스테이지가 뭐든 상관없이(다른 카테고리를 가리키는
-    # 신호라) 먼저 처리한다 — stage 검증보다 앞에 둔 이유: 모델이 stage를 잘못 보고해서 아래에서
-    # invalid_stage로 튕겨나가더라도, 같이 실려온 진짜 우려/위급 신호까지 함께 버려지면 안 된다.
-    # 실제로 "지금 판정 중인 스테이지(예: meal)와 무관한 화제(예: 다리 통증)가 나오면 discomfort_flags로
-    # 신고하라"는 지시를 모델이 stage 자체를 그 화제로 착각해서 잘못 부르는 경우가 있었다 — 그럴 때도
-    # discomfort_flags 안의 신호는 유효하므로 여기서 먼저 살린다.
-    # * self-reference 판단에 buffer.current()(서버가 실제로 추적 중인 현재 스테이지)가 아니라 위
-    # * assessed_stage(모델이 자칭한 stage가 실제로 유효할 때만 채워짐)를 쓴다 — 실제 통화에서
-    # * 모델이 stage="interest"(직전 스테이지, 이미 완료됨)로 잘못 부르면서 discomfort_flags에
-    # * category="health"(서버가 실제로는 이미 health로 넘어간 뒤)를 같이 보낸 사례가 있었다.
-    # * buffer.current()로 비교하면 우연히 category==실제 현재 스테이지라서 "이 턴의 assessment가
-    # * 알아서 처리해줄 것"이라 판단해 스폰을 건너뛰는데, 실제로는 이 호출 전체가 아래에서
-    # * invalid_stage로 튕겨나가 assessment가 끝내 아무 데도 반영 안 되고 신호가 통째로 사라졌다
-    # * (실제 통화 사례: "다리 아프다"는 발언이 흔적도 없이 스킵됨). assessed_stage 기준이면 이런
-    # * 경우 self-reference로 오인하지 않고 정상적으로 스폰한다.
+    
     _spawn_discomfort_flags(state, buffer, buffer.current(), discomfort_flags, assessed_stage)
 
-    # 3) 위 1번에서 계산해둔 stage_type/assessed_stage로 실제 검증 — 여기서부터 에러를 반환한다.
+    # * 위에서 계산해둔 stage_type/assessed_stage로 실제 검증 — 여기서부터 에러를 반환한다.
     if stage_type is None:
-        # * stage를 아예 안 넣었거나(부트스트랩 이후 턴에서도 생략) 잘못된 값을 넣은 경우 —
-        # * next_step 없이 에러만 던지면 모델이 복구할 방법을 몰라서 어르신 답변 없이 그냥 또
-        # * 호출하거나(같은 에러 반복), 심하면 이유를 지어내기 시작한다(실제 사례: 없던 "전화가
-        # * 안 들린다" 발언을 지어내 discomfort_flags로 신고). 아래 mismatch 분기처럼 실제
-        # * 스테이지 값을 알려줘서 다음 호출에서 바로 고칠 수 있게 한다.
         return json.dumps({
             "ok": False, "error": "invalid_stage",
             "next_step": f"stage 값이 없거나 잘못됐습니다. 지금 실제로 진행 중인 스테이지는 "
@@ -879,10 +755,7 @@ def check_in(
     stage_state = buffer.current()
 
     if stage_state.awaiting_probe_answer:
-        # * 방금 그 턴은 pending_probe를 캐묻는 자유 발화 확인 질문이었다(_advance의 probe 분기
-        # * 참고) — 지금 들어온 assessment/reason은 실제 척도 문항 판정이 아니므로 resource_offer_pending과
-        # * 동일하게 logic_data/_apply_assessment(및 high_severity_asks 카운트)를 건너뛰고 곧장 다음
-        # * 질문(이제 symptom_tag로 좁혀진 관련 척도 문항)으로 넘긴다.
+        # * 자세한 상황 파악을 위해 던진 probe_question 답변에 대한 처리
         stage_state.awaiting_probe_answer = False
         result = _advance(state, buffer)
         if "next_step" in result:
@@ -892,10 +765,7 @@ def check_in(
         return json.dumps(result, ensure_ascii=False)
 
     if stage_state.resource_offer_pending:
-        # * 방금 그 턴은 도움처 검색 제안만 하고 끝났어야 한다(3.8 참고) — 지금 들어온 assessment/reason은
-        # * 그 제안에 대한 어르신 답(수락/거절)일 뿐 실제 문항 판정이 아니므로 logic_data에 쓰면 안 되고,
-        # * _apply_assessment도 타면 안 된다(이미 앞선 턴에서 문항 판정은 끝났음). 플래그만 내리고 곧장
-        # * 진짜 다음 질문을 내준다.
+        # * 도움처 검색 여부 질문에 답변이 긍정으로 왔을 때
         stage_state.resource_offer_pending = False
         result = _advance(state, buffer)
         if "next_step" in result:
@@ -905,9 +775,7 @@ def check_in(
         return json.dumps(result, ensure_ascii=False)
 
     if buffer.awaiting_gap_answer:
-        # * 방금 그 턴은 PendingGap이 낸 "무관한 즉흥 질문"이었다(_consume_pending_gap 참고) — 지금
-        # * 들어온 assessment/reason은 그 잡담에 대한 답일 뿐 실제 문항 판정이 아니므로 resource_offer_pending과
-        # * 동일하게 logic_data/_apply_assessment를 건너뛰고 곧장 다음 간격(또는 강제 문항)으로 넘긴다.
+        # * 인지 문제 체크를 위한 즉흥 문제에 대한 답
         buffer.awaiting_gap_answer = False
         result = _advance(state, buffer)
         if "next_step" in result:
@@ -917,21 +785,11 @@ def check_in(
         return json.dumps(result, ensure_ascii=False)
 
     if buffer.closing_concern_pending:
-        # * 방금 그 턴은 CLOSING에서 나온 곁가지 걱정/질문에 공감만 하고 끝났어야 한다(아래 3번
-        # * CLOSING 분기 참고) — 지금 들어온 assessment/reason은 그 곁가지에 대한 답일 뿐 마무리
-        # * 문항 판정이 아니다. 여기서 곧장 CLOSING의 next_question()만 다시 뽑으면 안 된다 —
-        # * 그 곁가지 답변 자체가 discomfort_flags로 다른 카테고리(예: anxiety)를 스폰했거나 이미
-        # * 완료된 카테고리(예: health)를 재활성화했을 수 있는데, CLOSING에만 갇혀서 그 재활성화된
-        # * 스테이지를 영영 못 물어보고 통화가 끝나버린 실제 사례가 있었다. 반드시 _advance()를
-        # * 거쳐서 pick_next_stage()가 그런 긴급 후보를 CLOSING보다 먼저 고르게 한다 — CLOSING은
-        # * candidates에서 항상 제외되므로, 다른 후보가 하나라도 남아있으면 자동으로 그쪽이 먼저
-        # * 픽업된다(agent/stages.py의 pick_next_stage 참고).
+        # * CLOSING 단계에서 스테이지 재활성화가 감지되면 통화 종료하면 안됨
         buffer.closing_concern_pending = False
         result = _advance(state, buffer)
         if result.get("action") == "ask_question" and result.get("stage_type") == stages.StageType.CLOSING.value:
-            # * pick_next_stage()가 다른 후보를 못 찾아 CLOSING으로 되돌아온 경우에만, 방금 나눈
-            # * 곁가지 얘기를 다시 "마무리로 화제 전환"하는 것처럼 어색하게 브릿지하지 않고 곧장
-            # * 재질문하도록 문구를 다듬는다.
+            # * 활성화된 스테이지가 해소되어 다시 CLOSING으로 돌아온 경우
             result["next_step"] = (
                 f"화제 전환 멘트 없이 곧바로, \"{result['question']}\"의 취지대로 방금 그 이야기 말고 "
                 f"다른 궁금한 점이나 도움이 필요한 부분이 있는지 자연스럽게 다시 여쭤보세요. "
@@ -943,34 +801,19 @@ def check_in(
             )
         return json.dumps(result, ensure_ascii=False)
 
-    # * "문제없음"이 방금 이 카테고리에서 이미 "문제있음"으로 확인된 문항을 덮어써서 지워버리면
-    # * 안 된다 — 예: 우울 카테고리가 앞선 2개 문항에서 문제있음이었는데, 극성이 헷갈리는 마지막
-    # * 문항 하나를 모델이 잘못 판정해서 카테고리 전체가 문제없음으로 기록되는 실제 사례가 있었다.
-    # * 이 경우 logic_data는 건드리지 않고 이전 값(이미 확인된 문제있음)을 그대로 유지한다 — 실제
-    # * 대화 흐름/상태 전이(_apply_assessment)는 이 판정을 그대로 반영하므로, 여기서 막는 건 오직
-    # * "보고되는 요약/채점 데이터"뿐이다.
+    # * 헷갈리는 문항으로 인한 앞 질문에 대한 reason정보 유실 방지.
     if not (assessment == "문제없음" and _category_had_confirmed_problem(state, stage_state)):
         state["logic_data"][stage_type.value] = {"judgment": assessment, "reason": reason}
-    # * logic_data와 별개로 문항(question_id) 단위로도 남긴다 — 카테고리 단위인 logic_data와 달리,
-    # * "복약/식사"처럼 한 카테고리 안에 문항이 여럿(medication_entry/meal_entry)이어도 서로 안
-    # * 덮어쓴다. serve/assess.py의 _adherence()가 이 필드로 복약/식사 이행 여부를 판단한다.
+
+    # * question_id 기반으로도 로직 흐름 기록
     if stage_state.current_question is not None:
         state.setdefault("item_judgments", {})[stage_state.current_question.id] = {
             "judgment": assessment, "reason": reason,
         }
 
-    # 3) 판정 -> level 전이
-    # closing은 다른 스테이지와 다르게 다룬다 — "더 궁금한 점 있으세요?"에 "없어요"(문제없음)가
-    # 아닌 다른 답(새로운 이야기든 동문서답이든)이 오면, 그 얘기를 자연스럽게 받아준 뒤에도 정말
-    # 더 없는지 같은 질문을 다시 물어야 한다. closing_entry는 문항이 하나뿐이라 일반
-    # _apply_assessment를 타면(다음 문항이 없어) 바로 강제 완료돼버리므로, fail_current_question()으로
-    # 직접 재시도시킨다 — QUESTION_FAIL_LIMIT을 넘기면 그만 포기하고 끝내서 무한루프를 막는다.
+    # CLOSING에 대한 처리
     if stage_type == stages.StageType.CLOSING and assessment != "문제없음":
-        # * 여기서 곧장 마무리 질문을 다시 묻지 않는다 — closing_concern_pending을 세우고 이번
-        # * 턴은 곁가지 응답만으로 끝낸다. 마무리 재질문은 그 답을 들은 다음 check_in 호출에서
-        # * 위 closing_concern_pending 게이트가 처리한다(resource_offer_pending과 동일한 이유 —
-        # * 한 next_step에 "곁가지 응답"과 "마무리 재질문" 지시를 같이 실으면 모델이 한 턴에 질문을
-        # * 두 개 해버렸다, 실제 통화 사례).
+        # * CLOSING에서 추가 질문이나 처리사항이 생겼을 때 바로 종료해버리지 않게.
         stage_state.fail_current_question()
         buffer.closing_concern_pending = True
         return json.dumps({
@@ -983,16 +826,7 @@ def check_in(
                          "안내해 드립니다.",
         }, ensure_ascii=False)
     else:
-        # * 이 라운드에서 이미 실제로 확인된 문제(item_judgments에 "문제있음"이 기록됨)가 있는데,
-        # * 지금 판정이 "문제없음"이면 — 모델이 "그거 말고 다른 데는요?"류로 바꿔 물었을 때 어르신이
-        # * "발목 말고는 없어" 식으로 원래 문제를 재확인해줘도, 모델이 이걸 "전체적으로 문제없음"으로
-        # * 오판하는 사례가 프롬프트를 강화했음에도(_known_issue_note) 반복됐다(실제 통화 2건). 이러면
-        # * 확인 라운드가 조기 종료돼서 high_severity_asks가 2를 못 채우고 도움처 제안까지 아예
-        # * 못 간다 — 그래서 여기서는 모델의 오판을 코드로 방어한다: severity가 medium/high인 확인
-        # * 라운드 안에서 이미 문제있음이 한 번이라도 확인됐다면, 이번 "문제없음"은 상태 전이
-        # * (_apply_assessment/severity 승격/도움처 제안 카운트)에서는 문제있음으로 취급해 라운드를
-        # * 계속 이어간다 — 기존 캡(high_severity_asks>=2)이 여전히 무한 반복을 막아준다. logic_data/
-        # * item_judgments 기록은 위에서 이미 실제 판정(assessment) 그대로 남겼으니 왜곡되지 않는다.
+        # * 심각도가 medium/high이면 쉽게 스테이지 전환하지 않기
         effective_assessment = assessment
         if (
             assessment == "문제없음"
@@ -1002,25 +836,12 @@ def check_in(
             effective_assessment = "문제있음"
         stage_completed = _apply_assessment(buffer, stage_state, effective_assessment)
 
-    # 3.5~3.6은 서로 배타적이다(elif로 묶는다) — 한 턴에 severity가 한 단계만 전이하게 하기 위해서다.
-    # 안 그러면 예를 들어 3.6이 방금 severity를 None->low로 올렸는데 바로 이어서 3.5가 같은 턴의
-    # 같은 "문제있음" 판정을 또 보고 low->high까지 한 턴에 훌쩍 건너뛰어 버린다 — low 티어로 한 번
-    # 더 확인하자는 원래 의도(성급하게 확정하지 않기)가 무너진다. 위 effective_assessment 보정과
-    # 같은 이유로, 아래도 원판정이 아니라 effective_assessment를 기준으로 삼는다(CLOSING 분기는
-    # else 밖이라 여기 안 옴 — effective_assessment는 else 블록에서만 정의되므로 CLOSING이었으면
-    # 이 지점에 도달하지 않는다).
-    #
-    # 3.5) severity="low"로 스폰된 스테이지(의심은 되지만 아직 불확실한 상태 — questions.json의 low
-    # 티어 문항으로 가볍게 물어보던 중)였는데, 그 low 문항에 대한 답까지 "문제있음"으로 판정되면 —
-    # 즉 의심(스폰 시점 또는 3.6)에 이어 또 한 번("또") 문제가 확인된 것 — severity를 high로 즉시
-    # 올린다. 이러면 next_question()이 다음부터 high 티어 문항을 물어본다.
+    # 의심 단계 -> 확신으로 넘어가면 심각도 high로 설정
     if stage_state.severity == "low" and effective_assessment == "문제있음":
         stage_state.severity = "high"
 
-    # 3.6) baseline으로 승격된 스테이지(DEPRESSION/HEALTH)는 severity 없이(None) 시작해서, 인지/불안
-    # 신호까지 겸해서 받는 넓은 is_entry 문항 하나만 우선 묻는다. 그 entry 답변에서 "문제있음"이
-    # 나오면, 아직 확신할 단계는 아니니 곧장 high로 올리지 않고 먼저 low로 내려서 그 카테고리의
-    # 부드러운 후속 문항들로 한 번 더 확인한다 — 거기서 또 문제가 확인되면 다음 턴엔 3.5가 이어받는다.
+    # entry 답변에서 "문제있음"이나오면, 아직 확신할 단계는 아니니 곧장 high로 올리지 않고 
+    # 먼저 low로 내려서 그 카테고리의 부드러운 후속 문항들로 한 번 더 확인한다
     elif (
         stage_state.current_question is not None
         and stage_state.current_question.is_entry
@@ -1029,21 +850,6 @@ def check_in(
     ):
         stage_state.severity = "low"
 
-    # 3.7) severity="medium"/"high"(capped_tier와 동일 범위 — 3.5번은 low->high만 처리해서 medium은
-    # 계속 medium인 채로 캡에 걸릴 수 있는데, 그 경우에도 권유는 나가야 한다)로 확인 중일 때, 그
-    # 티어의 문항을 캡(2개)까지 다 물어봤는데도 마지막 답까지 "문제있음"으로 나오면
-    # (high_severity_asks>=2 — 이 시점엔 _apply_assessment가 이미 스테이지를 COMPLETED 처리한
-    # 뒤다) 확실히 도움이 필요하다고 판단된 것이므로 관련 도움처를 물어보라고 안내한다. 첫 번째
-    # 문항만 "문제있음"인 단계에서는 아직 확신할 수 없으니 권유하지 않고 남은 문항을 마저 물어본다
-    # (_advance가 정상적으로 이어감).
-    #
-    # 예전엔 이 권유 문구를 "다음 질문" 지시와 한 next_step에 이어붙이고 "원치 않으면 그때 다음
-    # 질문으로"라고 텍스트로만 순서를 설명했는데, 모델이 그 순서를 안 지키고 한 턴에 권유+다음
-    # 질문을 같이 말해버리는 경우가 있었다(실제 통화 사례 — 프롬프트 문구를 아무리 강하게 써도
-    # 완전히 막긴 어려움). 그래서 여기서는 텍스트가 아니라 상태(resource_offer_pending)로
-    # 순서를 강제한다 — 이 턴은 권유 next_step만 돌려주고 _advance()를 아예 안 부른다. 진짜
-    # 다음 질문(다른 스테이지)은 위 resource_offer_pending 게이트(이 함수 상단)가 다음 호출에서
-    # 내준다 — 이 스테이지는 이미 COMPLETED라 priority를 따로 올려둘 필요가 없다.
     if (
         stage_state.severity in ("medium", "high")
         and stage_state.high_severity_asks >= 2
@@ -1064,21 +870,20 @@ def check_in(
                          "값이나 넣어도 됩니다. 그러면 다음 질문을 안내해 드립니다.",
         }, ensure_ascii=False)
 
-    # 4) closing이 방금 완료됐으면 바로 작별 인사 안내
+    # closing이 방금 완료됐으면 바로 작별 인사 안내
     if stage_completed and stage_type == stages.StageType.CLOSING:
         return json.dumps({
             "ok": True, "action": "end_call",
             "next_step": "end_call 호출하세요.",
         }, ensure_ascii=False)
 
-    # 5) 다음 스테이지/질문 고르기 — trigger_next_turn 왕복 없이 이번 응답에 바로 실린다.
+    # 다음 스테이지/질문 고르기 — trigger_next_turn 왕복 없이 이번 응답에 바로 실린다.
     result = _advance(state, buffer)
     if "next_step" in result:
         result["next_step"] = (
             "공감성 발언을 짧게 건넵니다. 그리고 해당 instruction을 실행하세요: " + result["next_step"]
         )
     return json.dumps(result, ensure_ascii=False)
-
 
 # --------------------------------------------------------------------------
 # 3. 외부 API 호출 로직
@@ -1088,10 +893,9 @@ def check_external_api_necessity(
     state: dict, stage_type: str, answer_requirement: str,
     keyword: str | None = None, nearby_resource: list[dict] | None = None,
 ) -> str:
-    # * nearby_resource는 모델이 주는 게 아니라, integrations/dispatch.py가 keyword로 지오코딩한 결과를
-    # * 넣어준다(여기선 네트워킹 안 함). 스테이지 상태는 여기서 바꾸지 않는다 — 상태 전이는 오직
-    # * check_in만 한다(single-writer 원칙). 문자 발송은 이 함수가 아니라 전용 툴
-    # * send_resource_info가 담당한다(방금 안내한 이름을 실제 목록과 대조 검증하기 위해 분리됨).
+    # * nearby_resource는 모델이 주는 게 아니라, integrations/dispatch.py가
+    # * keyword로 검색한 결과를 실제 툴 호출 전에 먼저 가져옴. stage changing은 오직
+    # * check_in이 한다(single-writer 원칙).
 
     if nearby_resource:
         state["_last_offered_resources"] = nearby_resource
@@ -1158,12 +962,8 @@ def find_offered_resource(state: dict, resource_name: str) -> dict | None:
             return r
     return None
 
-
 def send_resource_info(state: dict, resource_name: str, sms_sent: bool = False) -> str:
-    # * sms_sent는 모델이 주는 게 아니라, integrations/dispatch.py가 실제로 문자를 보내본 결과를
-    # * 넣어준다(여기선 발송 자체는 안 함). 이 후속 발화는 원래 스테이지 질문에 대한 새로운 답이
-    # * 아니라 "문자로 받고 싶다"는 부가 요청이라 check_in(재판정)을 거치지 않고 바로 다음
-    # * 질문으로 넘어간다 — 원래 답변의 판정은 이미 그 이전 turn의 check_in에서 끝난 상태다.
+
     resource = find_offered_resource(state, resource_name)
     if resource is None:
         return json.dumps({
@@ -1181,11 +981,7 @@ def send_resource_info(state: dict, resource_name: str, sms_sent: bool = False) 
 
     buffer: stages.CallStageBuffer = state["_stage_buffer"]
 
-    # * check_external_api_necessity는 discomfort로 스폰된 TRY 스테이지에서도 호출될 수 있는데,
-    # * 그 스테이지는 여기 오기까지 한 번도 check_in의 판정을 못 받아 여전히 TRY로 남아있다 —
-    # * 그대로 _advance()를 부르면 pick_next_stage()가 severity 있는 TRY를 다시 최우선으로
-    # * 뽑아버려서, 모델이 방금 끝낸 안내를 처음부터 반복하게 된다. 정보 전달(문자 발송 시도)로
-    # * 그 우려가 해소됐다고 보고 여기서 직접 완료 처리한다.
+    # * 정보 전달(문자 발송 시도)로 그 우려가 해소됐다고 보고 여기서 직접 완료 처리한다.
     current = buffer.current()
     if current.level == stages.StageLevel.TRY:
         current.level = stages.StageLevel.COMPLETED
@@ -1197,9 +993,7 @@ def send_resource_info(state: dict, resource_name: str, sms_sent: bool = False) 
 
 
 # SYSTEM_PROMPT(통화 전체에 한 번만 실리는 시스템 지시문) 자체를 없앴다 — 대신 이 규칙(정보가
-#부족하면 함부로 판정하지 말고 먼저 확인하라)을 매 턴 next_step에 직접 실어 보낸다. run_tool은
-# 모든 툴 결과가 모델에게 돌아가기 전 마지막으로 거치는 지점이라, 여기서 재차 박아 넣어 코드로
-# 강제한다 — 통화가 길어져도 턴마다 다시 실리므로 초반 지시처럼 비중이 흐려지지 않는다.
+#부족하면 함부로 판정하지 말고 먼저 확인하라)을 매 턴 next_step에 직접 실어 보낸다.
 _BASIC_REMINDER = (
     "툴 호출에 필요한 정보가 충족되지 않으면 함수 호출 없이 그냥 평소처럼 대화해서 "
     "확신이 서면 그때 지금까지 나눈 내용을 종합해서 판정한다. "

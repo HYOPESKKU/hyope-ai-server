@@ -38,7 +38,7 @@ async def send_resource_sms(to: str, resources: list[dict]) -> bool:
     body = _resource_sms_body(resources)
     try:
         await _sms_client().messages.create(
-            to=to, from_=os.environ["CLAWOPS_FROM_NUMBER"], body=body, type="sms",
+            to=to, from_=os.environ["CLAWOPS_FROM_NUMBER"], body=body,
         )
     except Exception:
         log.exception("send_resource_sms failed — caller will fall back to voice guidance")
@@ -46,16 +46,18 @@ async def send_resource_sms(to: str, resources: list[dict]) -> bool:
     return True
 
 
-_MAX_SMS_BYTES = 200  # ClawOps가 본문이 이 바이트 수를 넘으면 BadRequestError로 거부한다.
+_MAX_SMS_BYTES = 200  # 소프트 캡 — 본문을 짧게 유지하기 위함이지, ClawOps 전송 거부를 막기 위함이 아니다.
+# * 예전엔 messages.create(..., type="sms")로 타입을 강제해서, ClawOps의 단문(SMS) 바이트 한도를
+# * 넘기면 BadRequestError로 통째 거부됐다(실측 한도는 90byte/EUC-KR 45자 — 이 200이라는 값은
+# * 그 한도를 못 맞춰 여전히 실패하곤 했다). type을 생략하면 ClawOps가 길이에 따라 SMS/LMS를 자동
+# * 선택해준다는 게 에러 메시지에 안내돼 있어서(위 create 호출부에서 type을 넘기지 않도록 수정),
+# * 지금은 이 잘라내기가 전송 실패를 막기 위한 게 아니라 그냥 문자 길이를 짧게 유지하기 위한 것이다.
 
 
 def _truncate_utf8_bytes(text: str, max_bytes: int) -> str:
-    # * 한글은 UTF-8에서 글자당 3바이트라 len(text)만으로는 실제 전송 바이트 수를 가늠할 수 없다 —
-    # * 실제로 카테고리 2~3개짜리 요약도 200바이트를 넘어 ClawOps가 통째로 거부한 사례가 있었다
-    # * (clawops.BadRequestError: SMS Body는 200byte를 초과할 수 없습니다). 호출부(아래
-    # * _call_summary_sms_body)가 이미 짧게 만들지만, 이름/카테고리 개수에 따라 그래도 넘칠 수
-    # * 있으니 마지막 안전장치로 바이트 단위로 잘라낸다 — 멀티바이트 문자 중간을 끊으면 디코딩
-    # * 에러가 나므로, 끝에서부터 한 바이트씩 줄여가며 유효한 UTF-8이 될 때까지 시도한다.
+    # 한글은 UTF-8에서 글자당 3바이트라 len(text)만으로는 실제 바이트 수를 가늠할 수 없다.
+    # 멀티바이트 문자 중간을 끊으면 디코딩 에러가 나므로, 끝에서부터 한 바이트씩 줄여가며
+    # 유효한 UTF-8이 될 때까지 시도한다.
     encoded = text.encode("utf-8")
     if len(encoded) <= max_bytes:
         return text
@@ -72,7 +74,7 @@ def _call_summary_sms_body(recipient_name: str, highlights: str) -> str:
     # * highlights는 agent/tools.py의 build_call_summary_highlights()가 만드는 압축판(문제있음류
     # * 카테고리 라벨만 나열, 예: "건강, 우울 관련 대화가 있었어요") — 카테고리별 상세 내용(기존/
     # * 신규 대조, OO 호소 등)은 여기 안 싣는다. 그건 runtime/call_summaries/*.txt 디버그 파일에만
-    # * 남는다(200바이트 제한 때문에 SMS엔 못 담음).
+    # * 남는다(SMS는 짧게 유지하려는 소프트 캡 때문에 다 못 담음).
     body = (
         f"{recipient_name}님 통화 요약\n"
         f"{highlights}\n"
@@ -94,7 +96,7 @@ async def send_call_summary_sms(to: str, recipient_name: str, highlights: str) -
     try:
         await _sms_client().messages.create(
             to=to, from_=os.environ["CLAWOPS_FROM_NUMBER"],
-            body=_call_summary_sms_body(recipient_name, highlights), type="sms",
+            body=_call_summary_sms_body(recipient_name, highlights),
         )
     except Exception:
         log.exception("send_call_summary_sms failed")
